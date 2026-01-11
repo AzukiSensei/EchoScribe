@@ -397,10 +397,25 @@ def transcribe_local(
             compute_type = 'int8'
         
         # Load the model
-        if custom_model_path:
-            model = WhisperModel(custom_model_path, device=device, compute_type=compute_type)
-        else:
-            model = WhisperModel(model_name, device=device, compute_type=compute_type)
+        # Load the model with CPU fallback
+        try:
+            if custom_model_path:
+                model = WhisperModel(custom_model_path, device=device, compute_type=compute_type)
+            else:
+                model = WhisperModel(model_name, device=device, compute_type=compute_type)
+        except Exception as e:
+            error_str = str(e).lower()
+            if 'cublas' in error_str or 'cuda' in error_str or 'dll' in error_str:
+                send_progress(35, 'Erreur CUDA détectée (DLL manquante?), passage en mode CPU...', 'transcribing')
+                print(f"CUDA Error: {e}, falling back to CPU", file=sys.stderr)
+                device = 'cpu'
+                compute_type = 'int8'
+                if custom_model_path:
+                    model = WhisperModel(custom_model_path, device=device, compute_type=compute_type)
+                else:
+                    model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            else:
+                raise e
         
         send_progress(40, 'Transcription en cours...', 'transcribing')
         

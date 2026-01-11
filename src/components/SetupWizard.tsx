@@ -3,6 +3,7 @@ import { Check, X, Loader2, Download, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
+import { Translations } from '@/i18n'
 
 interface DependencyStatus {
     python: { installed: boolean; version: string | null }
@@ -15,12 +16,13 @@ interface DependencyStatus {
 interface SetupWizardProps {
     onComplete: () => void
     onSkip: () => void
+    translations: Translations
 }
 
 /**
  * Setup wizard component to check and install dependencies
  */
-export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
+export function SetupWizard({ onComplete, onSkip, translations: t }: SetupWizardProps) {
     const [checking, setChecking] = useState(true)
     const [deps, setDeps] = useState<DependencyStatus | null>(null)
     const [installing, setInstalling] = useState<string | null>(null)
@@ -79,9 +81,9 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                 <Card className="w-full max-w-lg">
                     <CardContent className="flex flex-col items-center justify-center p-12">
                         <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-                        <p className="text-lg font-medium">Vérification des dépendances...</p>
+                        <p className="text-lg font-medium">{t.checking}</p>
                         <p className="text-sm text-muted-foreground mt-2">
-                            Nous vérifions que Python, FFmpeg et les bibliothèques sont installés.
+                            {t.checkingDescription}
                         </p>
                     </CardContent>
                 </Card>
@@ -93,56 +95,60 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
         <div className="flex items-center justify-center min-h-screen bg-background p-4">
             <Card className="w-full max-w-2xl">
                 <CardHeader>
-                    <CardTitle className="text-2xl">Configuration d'EchoScribe</CardTitle>
+                    <CardTitle className="text-2xl">{t.setupTitle}</CardTitle>
                     <CardDescription>
-                        Quelques dépendances sont nécessaires pour la transcription locale.
+                        {t.setupDescription}
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     {/* Python */}
                     <DependencyRow
                         name="Python 3.11+"
-                        description="Moteur de transcription"
+                        description={t.pythonEngine}
                         installed={deps?.python.installed || false}
                         version={deps?.python.version}
                         installing={installing === 'python'}
                         progress={installing === 'python' ? installProgress : 0}
                         onInstall={() => installDependency('python')}
+                        translations={t}
                     />
 
                     {/* FFmpeg */}
                     <DependencyRow
                         name="FFmpeg"
-                        description="Extraction audio des vidéos"
+                        description={t.audioExtraction}
                         installed={deps?.ffmpeg.installed || false}
                         version={deps?.ffmpeg.version}
                         installing={installing === 'ffmpeg'}
                         progress={installing === 'ffmpeg' ? installProgress : 0}
                         onInstall={() => installDependency('ffmpeg')}
                         disabled={!deps?.python.installed}
+                        translations={t}
                     />
 
                     {/* faster-whisper */}
                     <DependencyRow
                         name="faster-whisper"
-                        description="Modèle de transcription optimisé"
+                        description={t.transcriptionModel}
                         installed={deps?.fasterWhisper.installed || false}
                         installing={installing === 'fasterWhisper'}
                         progress={installing === 'fasterWhisper' ? installProgress : 0}
                         onInstall={() => installDependency('fasterWhisper')}
                         disabled={!deps?.python.installed}
+                        translations={t}
                     />
 
                     {/* PyTorch */}
                     <DependencyRow
                         name="PyTorch + CUDA"
-                        description={deps?.pytorch.cuda ? "GPU NVIDIA détecté ✓" : "Pour l'accélération GPU (optionnel)"}
+                        description={deps?.pytorch.cuda ? t.gpuDetected : t.gpuAcceleration}
                         installed={deps?.pytorch.installed || false}
                         installing={installing === 'pytorch'}
                         progress={installing === 'pytorch' ? installProgress : 0}
                         onInstall={() => installDependency('pytorch')}
                         disabled={!deps?.python.installed}
                         optional
+                        translations={t}
                     />
 
                     {/* Warning if not all installed */}
@@ -150,9 +156,9 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                         <div className="flex items-start gap-3 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
                             <AlertTriangle className="h-5 w-5 text-yellow-500 shrink-0 mt-0.5" />
                             <div>
-                                <p className="text-sm font-medium text-yellow-500">Dépendances manquantes</p>
+                                <p className="text-sm font-medium text-yellow-500">{t.dependenciesMissing}</p>
                                 <p className="text-xs text-muted-foreground mt-1">
-                                    Le mode local nécessite Python, FFmpeg et faster-whisper. Vous pouvez toujours utiliser le mode Cloud avec une clé API OpenAI.
+                                    {t.dependenciesMissingDesc}
                                 </p>
                             </div>
                         </div>
@@ -161,14 +167,14 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                     {/* Actions */}
                     <div className="flex justify-between pt-4 border-t">
                         <Button variant="ghost" onClick={onSkip}>
-                            Passer
+                            {t.skip}
                         </Button>
                         <div className="flex gap-2">
                             <Button variant="outline" onClick={checkDependencies}>
-                                Revérifier
+                                {t.recheck}
                             </Button>
                             <Button onClick={onComplete} disabled={!allInstalled && installing !== null}>
-                                {allInstalled ? 'Continuer' : 'Continuer quand même'}
+                                {allInstalled ? t.continue : t.continueAnyway}
                             </Button>
                         </div>
                     </div>
@@ -188,6 +194,7 @@ interface DependencyRowProps {
     onInstall: () => void
     disabled?: boolean
     optional?: boolean
+    translations: Translations
 }
 
 function DependencyRow({
@@ -199,7 +206,8 @@ function DependencyRow({
     progress = 0,
     onInstall,
     disabled,
-    optional
+    optional,
+    translations: t
 }: DependencyRowProps) {
     return (
         <div className="flex items-center justify-between p-4 rounded-lg bg-muted/50">
@@ -221,7 +229,7 @@ function DependencyRow({
                 <div>
                     <p className="font-medium text-sm">
                         {name}
-                        {optional && <span className="text-xs text-muted-foreground ml-2">(optionnel)</span>}
+                        {optional && <span className="text-xs text-muted-foreground ml-2">({t.optional})</span>}
                     </p>
                     <p className="text-xs text-muted-foreground">
                         {version || description}
@@ -243,7 +251,7 @@ function DependencyRow({
                         disabled={disabled}
                     >
                         <Download className="h-4 w-4 mr-1" />
-                        Installer
+                        {t.install}
                     </Button>
                 )}
             </div>

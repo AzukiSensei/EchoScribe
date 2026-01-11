@@ -1,51 +1,70 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-    Mic,
-    Cloud,
-    Settings,
-    Copy,
-    Check,
-    Loader2,
-    AlertCircle,
-    Cpu,
-    Zap,
-    Download,
-    Languages,
-    FileText,
-    History,
-    Sun,
-    Moon,
-    FolderOpen,
-    Trash2,
-    RefreshCw,
-    Layers
+    FolderOpen, Mic, Info, FileText, Copy,
+    Download, Layers, AlertCircle, Check, Loader2,
+    Moon, Sun, Trash2, Settings, Cloud, Cpu, History
 } from 'lucide-react'
-import SetupWizard from '@/components/SetupWizard'
-import { AudioRecorder } from '@/components/AudioRecorder'
-
-import { DropZone } from '@/components/DropZone'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Progress } from '@/components/ui/progress'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { Select } from '@/components/ui/select'
+import { Progress } from '@/components/ui/progress'
 import { Toaster, useToast } from '@/components/ui/toaster'
+import { AudioRecorder } from '@/components/AudioRecorder'
+import { DropZone } from '@/components/DropZone'
+import SetupWizard from '@/components/SetupWizard'
+import { getDefaultLanguage, getTranslations, Language, languageNames } from '@/i18n'
 
-// Available Whisper models with their VRAM requirements
-const WHISPER_MODELS = [
-    { id: 'tiny', name: 'Tiny', vram: '~1 GB', speed: 'Très rapide', size: '~75 MB' },
-    { id: 'base', name: 'Base', vram: '~1 GB', speed: 'Rapide', size: '~145 MB' },
-    { id: 'small', name: 'Small', vram: '~2 GB', speed: 'Moyen', size: '~488 MB' },
-    { id: 'medium', name: 'Medium', vram: '~5 GB', speed: 'Lent', size: '~1.5 GB' },
-    { id: 'large-v3', name: 'Large V3', vram: '~6 GB', speed: 'Très lent', size: '~3.1 GB' },
-    { id: 'large-v3-turbo', name: 'Large V3 Turbo', vram: '~6 GB', speed: 'Rapide (optimisé)', size: '~1.6 GB' },
-]
+// Types
+interface Segment {
+    start: number
+    end: number
+    text: string
+}
 
-// Supported languages
-const LANGUAGES = [
+interface ModelInfo {
+    name: string
+    size: string
+    vram?: string
+    speed?: string
+    type?: 'builtin' | 'custom'
+    downloaded?: boolean
+    path?: string
+    sha?: string
+    url?: string
+}
+
+interface HistoryItem {
+    id: string
+    fileName: string
+    date: string
+    text: string
+    segments: Segment[]
+    language: string
+    mode: 'local' | 'cloud'
+    model: string
+}
+
+// Transcription status types
+type TranscriptionStatus = 'idle' | 'extracting' | 'transcribing' | 'complete' | 'error' | 'downloading'
+
+interface ProgressInfo {
+    status: TranscriptionStatus
+    progress: number
+    message: string
+    model?: string
+}
+
+interface DownloadProgress {
+    model: string
+    progress: number
+    message: string
+}
+
+const SUPPORTED_LANGUAGES = [
     { code: 'auto', name: 'Auto-détection' },
     { code: 'fr', name: 'Français' },
     { code: 'en', name: 'English' },
@@ -69,41 +88,6 @@ const EXPORT_FORMATS = [
     { id: 'vtt', name: 'WebVTT (.vtt)', icon: FileText },
 ]
 
-// Transcription status types
-type TranscriptionStatus = 'idle' | 'extracting' | 'transcribing' | 'complete' | 'error'
-
-interface ProgressInfo {
-    status: TranscriptionStatus
-    progress: number
-    message: string
-}
-
-interface Segment {
-    start: number
-    end: number
-    text: string
-}
-
-interface HistoryItem {
-    id: string
-    fileName: string
-    date: string
-    text: string
-    segments: Segment[]
-    language: string
-    mode: 'local' | 'cloud'
-    model: string
-}
-
-interface ModelInfo {
-    name: string
-    size: string
-    vram: string
-    type: 'builtin' | 'custom'
-    downloaded: boolean
-    path?: string
-}
-
 /**
  * Format timestamp for SRT format
  */
@@ -112,7 +96,7 @@ function formatTimestampSRT(seconds: number): string {
     const minutes = Math.floor((seconds % 3600) / 60)
     const secs = Math.floor(seconds % 60)
     const millis = Math.floor((seconds % 1) * 1000)
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${millis.toString().padStart(3, '0')}`
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${millis.toString().padStart(3, '0')} `
 }
 
 /**
@@ -123,7 +107,7 @@ function formatTimestampVTT(seconds: number): string {
     const minutes = Math.floor((seconds % 3600) / 60)
     const secs = Math.floor(seconds % 60)
     const millis = Math.floor((seconds % 1) * 1000)
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')} `
 }
 
 /**
@@ -133,7 +117,7 @@ function segmentsToSRT(segments: Segment[]): string {
     return segments.map((seg, i) => {
         const start = formatTimestampSRT(seg.start)
         const end = formatTimestampSRT(seg.end)
-        return `${i + 1}\n${start} --> ${end}\n${seg.text.trim()}\n`
+        return `${i + 1} \n${start} --> ${end} \n${seg.text.trim()} \n`
     }).join('\n')
 }
 
@@ -145,7 +129,7 @@ function segmentsToVTT(segments: Segment[]): string {
     segments.forEach(seg => {
         const start = formatTimestampVTT(seg.start)
         const end = formatTimestampVTT(seg.end)
-        lines.push(`${start} --> ${end}\n${seg.text.trim()}\n`)
+        lines.push(`${start} --> ${end} \n${seg.text.trim()} \n`)
     })
     return lines.join('\n')
 }
@@ -158,6 +142,20 @@ function App() {
     const [setupComplete, setSetupComplete] = useState(() => {
         return localStorage.getItem('echoscribe_setup_complete') === 'true'
     })
+
+    // Language state
+    const [language, setLanguage] = useState<Language>(() => {
+        const saved = localStorage.getItem('echoscribe_language')
+        return (saved as Language) || getDefaultLanguage()
+    })
+
+    // Get current translations
+    const t = getTranslations(language)
+
+    // Update title and description when language changes
+    useEffect(() => {
+        document.title = t.appName
+    }, [language, t])
 
     // Theme state
     const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -190,11 +188,12 @@ function App() {
 
     // Language and translation
     const [sourceLanguage, setSourceLanguage] = useState(() => {
-        return localStorage.getItem('echoscribe_language') || 'auto'
+        return localStorage.getItem('echoscribe_language_source') || 'auto' // Fix key
     })
     const [translateToEnglish, setTranslateToEnglish] = useState(() => {
         return localStorage.getItem('echoscribe_translate') === 'true'
     })
+    const [exportFormat, setExportFormat] = useState('txt')
 
     // Progress state
     const [progressInfo, setProgressInfo] = useState<ProgressInfo>({
@@ -210,9 +209,8 @@ function App() {
     const [copied, setCopied] = useState(false)
 
     // Model management
-    const [availableModels, setAvailableModels] = useState<Record<string, ModelInfo>>({})
-    const [downloadingModel, setDownloadingModel] = useState<string | null>(null)
-    const [downloadProgress, setDownloadProgress] = useState(0)
+    const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]) // Changed to array
+    const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null) // Changed to object
     const [downloadedModels, setDownloadedModels] = useState<Set<string>>(new Set())
 
     // History
@@ -307,25 +305,26 @@ function App() {
 
         // Download progress
         const handleDownloadProgress = (_event: unknown, data: { model: string; progress: number; message: string }) => {
-            setDownloadProgress(data.progress)
+            setDownloadProgress({ model: data.model, progress: data.progress, message: data.message })
         }
 
         // Download complete
         const handleDownloadComplete = (_event: unknown, data: { model: string; success: boolean }) => {
-            setDownloadingModel(null)
-            setDownloadProgress(0)
+            setDownloadProgress(null)
             if (data.success) {
                 setDownloadedModels(prev => new Set([...prev, data.model]))
             }
         }
 
         // Models list received
+        // Models list received
         const handleModelsList = (_event: unknown, data: { models: Record<string, unknown> }) => {
-            setAvailableModels(data.models as Record<string, ModelInfo>)
+            const modelsArray = Object.values(data.models) as ModelInfo[]
+            setAvailableModels(modelsArray)
             // Update downloadedModels from the list
-            const downloaded = Object.entries(data.models)
-                .filter(([, m]) => (m as ModelInfo).downloaded)
-                .map(([name]) => name)
+            const downloaded = modelsArray
+                .filter(m => m.downloaded)
+                .map(m => m.name)
             setDownloadedModels(prev => new Set([...prev, ...downloaded]))
         }
 
@@ -410,7 +409,7 @@ function App() {
                 setProgressInfo({
                     status: 'transcribing',
                     progress,
-                    message: `Transcription en cours... ${progress}%`
+                    message: `Transcription en cours... ${progress}% `
                 })
             } else {
                 clearInterval(interval)
@@ -469,8 +468,7 @@ function App() {
 
         if (window.electronAPI?.downloadModel) {
             console.log('Calling electronAPI.downloadModel')
-            setDownloadingModel(modelName)
-            setDownloadProgress(0)
+            setDownloadProgress({ model: modelName, progress: 0, message: t.downloadingModel })
             window.electronAPI.downloadModel(modelName)
 
             toast({
@@ -480,8 +478,7 @@ function App() {
         } else {
             console.log('electronAPI.downloadModel not available')
             // Simulate download for development
-            setDownloadingModel(modelName)
-            setDownloadProgress(0)
+            setDownloadProgress({ model: modelName, progress: 0, message: t.downloadingModel })
 
             toast({
                 title: 'Mode développement',
@@ -492,10 +489,9 @@ function App() {
             let progress = 0
             const interval = setInterval(() => {
                 progress += 10
-                setDownloadProgress(progress)
+                setDownloadProgress({ model: modelName, progress, message: 'Downloading (simulated)...' })
                 if (progress >= 100) {
                     clearInterval(interval)
-                    setDownloadingModel(null)
                     toast({
                         title: 'Téléchargé (simulé)',
                         description: `${modelName} est prêt.`,
@@ -505,6 +501,20 @@ function App() {
             }, 300)
         }
     }, [toast])
+
+    // Open models folder
+    const handleOpenModelsFolder = useCallback(async () => {
+        if (window.electronAPI?.openModelsFolder) {
+            const success = await window.electronAPI.openModelsFolder()
+            if (!success) {
+                toast({
+                    title: t.error,
+                    description: t.openFolderError,
+                    variant: 'destructive'
+                })
+            }
+        }
+    }, [toast, t])
 
     // Export transcription
     const handleExport = useCallback(async (format: 'txt' | 'srt' | 'vtt') => {
@@ -641,12 +651,13 @@ function App() {
             <SetupWizard
                 onComplete={handleSetupComplete}
                 onSkip={handleSetupComplete}
+                translations={t}
             />
         )
     }
 
     return (
-        <div className={`min-h-screen bg-background transition-colors ${isDarkMode ? 'dark' : ''}`}>
+        <div className={`min - h - screen bg - background transition - colors ${isDarkMode ? 'dark' : ''} `}>
             <div className="container mx-auto py-8 px-4 max-w-4xl">
                 {/* Header */}
                 <header className="text-center mb-8">
@@ -656,24 +667,33 @@ function App() {
                                 <Mic className="h-8 w-8 text-primary" />
                             </div>
                             <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-                                EchoScribe
+                                {t.appName}
                             </h1>
                         </div>
                         <div className="flex items-center gap-2">
-                            {/* Recording Mode Toggle */}
-                            <Button
-                                variant={inputMode === 'record' ? "default" : "ghost"}
-                                size="icon"
-                                onClick={() => setInputMode(inputMode === 'record' ? 'file' : 'record')}
-                                title={inputMode === 'record' ? "Mode Enregistrement" : "Enregistrer de l'audio"}
+                            {/* Language Selector */}
+                            <Select
+                                value={language}
+                                onChange={(e) => {
+                                    const newLang = e.target.value as Language
+                                    setLanguage(newLang)
+                                    localStorage.setItem('echoscribe_language', newLang)
+                                }}
+                                className="w-32"
                             >
-                                <Mic className="h-5 w-5" />
-                            </Button>
+                                {Object.entries(languageNames).map(([code, name]) => (
+                                    <option key={code} value={code}>
+                                        {name}
+                                    </option>
+                                ))}
+                            </Select>
+
                             <Button
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => setShowHistory(!showHistory)}
                                 className="relative"
+                                title={t.history}
                             >
                                 <History className="h-5 w-5" />
                                 {history.length > 0 && (
@@ -686,78 +706,77 @@ function App() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => setIsDarkMode(!isDarkMode)}
+                                title={isDarkMode ? t.lightMode : t.darkMode}
                             >
                                 {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
                             </Button>
                         </div>
                     </div>
-                    <p className="text-muted-foreground">
-                        Transcription audio et vidéo avec Whisper
+                    <p className="text-xl text-muted-foreground">
+                        {t.appDescription}
                     </p>
                 </header>
 
-                {/* History Panel */}
-                {
-                    showHistory && (
-                        <Card className="mb-6">
-                            <CardHeader>
-                                <div className="flex items-center justify-between">
-                                    <CardTitle className="text-lg flex items-center gap-2">
-                                        <History className="h-5 w-5" />
-                                        Historique des transcriptions
-                                    </CardTitle>
-                                    {history.length > 0 && (
-                                        <Button variant="ghost" size="sm" onClick={handleClearHistory}>
-                                            <Trash2 className="h-4 w-4 mr-2" />
-                                            Tout effacer
-                                        </Button>
-                                    )}
-                                </div>
-                            </CardHeader>
-                            <CardContent>
-                                {history.length === 0 ? (
-                                    <p className="text-muted-foreground text-center py-4">
-                                        Aucune transcription dans l'historique.
-                                    </p>
-                                ) : (
-                                    <div className="space-y-2 max-h-64 overflow-y-auto">
-                                        {history.map(item => (
-                                            <div
-                                                key={item.id}
-                                                className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                                            >
-                                                <div className="flex-1 min-w-0 cursor-pointer" onClick={() => handleLoadFromHistory(item)}>
-                                                    <p className="font-medium truncate">{item.fileName}</p>
-                                                    <p className="text-sm text-muted-foreground">
-                                                        {new Date(item.date).toLocaleDateString('fr-FR', {
-                                                            day: 'numeric',
-                                                            month: 'short',
-                                                            year: 'numeric',
-                                                            hour: '2-digit',
-                                                            minute: '2-digit'
-                                                        })}
-                                                        {' • '}
-                                                        {item.mode === 'cloud' ? 'Cloud' : item.model}
-                                                        {item.language && ` • ${item.language.toUpperCase()}`}
-                                                    </p>
-                                                </div>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation()
-                                                        handleDeleteFromHistory(item.id)
-                                                    }}
-                                                >
-                                                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                                                </Button>
-                                            </div>
-                                        ))}
-                                    </div>
+                {showHistory && (
+                    <Card className="mb-6">
+                        <CardHeader>
+                            <div className="flex items-center justify-between">
+                                <CardTitle className="text-lg flex items-center gap-2">
+                                    <History className="h-5 w-5" />
+                                    {t.transcriptionHistory}
+                                </CardTitle>
+                                {history.length > 0 && (
+                                    <Button variant="ghost" size="sm" onClick={handleClearHistory}>
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        {t.clearAllHistory}
+                                    </Button>
                                 )}
-                            </CardContent>
-                        </Card>
-                    )
+                            </div>
+                        </CardHeader>
+                        <CardContent>
+                            {history.length === 0 ? (
+                                <p className="text-muted-foreground text-center py-4">
+                                    {t.noHistory}
+                                </p>
+                            ) : (
+                                <div className="space-y-2 max-h-64 overflow-y-auto">
+                                    {history.map(item => (
+                                        <div
+                                            key={item.id}
+                                            className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                                        >
+                                            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => handleLoadFromHistory(item)}>
+                                                <p className="font-medium truncate">{item.fileName}</p>
+                                                <p className="text-sm text-muted-foreground">
+                                                    {new Date(item.date).toLocaleDateString(language, {
+                                                        day: 'numeric',
+                                                        month: 'short',
+                                                        year: 'numeric',
+                                                        hour: '2-digit',
+                                                        minute: '2-digit'
+                                                    })}
+                                                    {' • '}
+                                                    {item.mode === 'cloud' ? 'Cloud' : item.model}
+                                                    {item.language && ` • ${item.language.toUpperCase()} `}
+                                                </p>
+                                            </div>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    handleDeleteFromHistory(item.id)
+                                                }}
+                                            >
+                                                <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                                            </Button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                )
                 }
 
                 <div className="space-y-6">
@@ -767,14 +786,14 @@ function App() {
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
                                     <Settings className="h-5 w-5 text-muted-foreground" />
-                                    <CardTitle className="text-lg">Configuration</CardTitle>
+                                    <CardTitle className="text-lg">{t.configuration}</CardTitle>
                                 </div>
                                 <Button
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => setShowAdvanced(!showAdvanced)}
                                 >
-                                    {showAdvanced ? 'Moins d\'options' : 'Plus d\'options'}
+                                    {showAdvanced ? t.lessOptions : t.moreOptions}
                                 </Button>
                             </div>
                         </CardHeader>
@@ -789,12 +808,12 @@ function App() {
                                     )}
                                     <div>
                                         <Label className="text-base font-medium">
-                                            {useCloudMode ? 'Mode Cloud (API OpenAI)' : 'Mode Local (faster-whisper)'}
+                                            {useCloudMode ? t.cloudMode : t.localMode}
                                         </Label>
                                         <p className="text-sm text-muted-foreground">
                                             {useCloudMode
-                                                ? 'Utilise les serveurs OpenAI pour la transcription'
-                                                : 'Transcription sur votre machine avec GPU'}
+                                                ? t.cloudDescription
+                                                : t.localDescription}
                                         </p>
                                     </div>
                                 </div>
@@ -807,113 +826,97 @@ function App() {
 
                             {/* Model Selection (Local mode only) */}
                             {!useCloudMode && (
-                                <div className="space-y-2">
-                                    <Label htmlFor="model-select" className="flex items-center gap-2">
-                                        <Zap className="h-4 w-4" />
-                                        Modèle Whisper
-                                    </Label>
-                                    <div className="flex gap-2">
-                                        <Select
-                                            id="model-select"
-                                            value={selectedModel}
-                                            onChange={(e) => setSelectedModel(e.target.value)}
-                                            disabled={isProcessing}
-                                            className="flex-1"
-                                        >
-                                            {WHISPER_MODELS.map((model) => (
-                                                <option key={model.id} value={model.id}>
-                                                    {model.name} - {model.vram} - {model.speed}
-                                                </option>
-                                            ))}
-                                            {Object.values(availableModels)
-                                                .filter(m => m.type === 'custom')
-                                                .map(model => (
-                                                    <option key={model.name} value={model.path || model.name}>
-                                                        {model.name} (Custom)
-                                                    </option>
-                                                ))
-                                            }
-                                        </Select>
-                                        {downloadedModels.has(selectedModel) || availableModels[selectedModel]?.downloaded ? (
-                                            <div className="flex items-center justify-center w-10 h-10 rounded-md border bg-green-500/10 text-green-500" title="Modèle téléchargé">
-                                                <Check className="h-4 w-4" />
-                                            </div>
-                                        ) : (
-                                            <Button
-                                                variant="outline"
-                                                size="icon"
-                                                onClick={() => handleDownloadModel(selectedModel)}
-                                                disabled={isProcessing || downloadingModel !== null}
-                                                title="Télécharger le modèle"
-                                            >
-                                                {downloadingModel === selectedModel ? (
-                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                <div className="space-y-4 pt-2">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <Label>{t.whisperModel}</Label>
+                                            <div className="flex gap-2">
+                                                <Select
+                                                    value={selectedModel}
+                                                    onChange={(e) => setSelectedModel(e.target.value)}
+                                                    disabled={isProcessing}
+                                                    className="flex-1"
+                                                >
+                                                    {availableModels.map(model => (
+                                                        <option key={model.name} value={model.name}>
+                                                            {model.name} ({model.size})
+                                                        </option>
+                                                    ))}
+                                                </Select>
+                                                {!downloadedModels.has(selectedModel) ? (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="icon"
+                                                        onClick={() => handleDownloadModel(selectedModel)}
+                                                        disabled={downloadProgress !== null}
+                                                        title={t.downloadModel}
+                                                    >
+                                                        {downloadProgress !== null && downloadProgress.model === selectedModel ? (
+                                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                                        ) : (
+                                                            <Download className="h-4 w-4" />
+                                                        )}
+                                                    </Button>
                                                 ) : (
-                                                    <Download className="h-4 w-4" />
+                                                    <div className="flex items-center justify-center w-10 h-10 rounded-md border bg-muted/50" title={t.modelDownloaded}>
+                                                        <Check className="h-5 w-5 text-green-500" />
+                                                    </div>
                                                 )}
-                                            </Button>
-                                        )}
-                                    </div>
-                                    {downloadingModel && (
-                                        <div className="space-y-1">
-                                            <Progress value={downloadProgress} className="h-2" />
-                                            <p className="text-xs text-muted-foreground">
-                                                Téléchargement de {downloadingModel}... {downloadProgress}%
-                                            </p>
+                                                <Button
+                                                    variant="outline"
+                                                    size="icon"
+                                                    onClick={handleOpenModelsFolder}
+                                                    title={t.openModelsFolder}
+                                                >
+                                                    <FolderOpen className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                            {downloadProgress && (
+                                                <div className="space-y-1 mt-2">
+                                                    <div className="flex justify-between text-xs text-muted-foreground">
+                                                        <span>{downloadProgress.message}</span>
+                                                        <span>{Math.round(downloadProgress.progress)}%</span>
+                                                    </div>
+                                                    <Progress value={downloadProgress.progress} className="h-1" />
+                                                </div>
+                                            )}
                                         </div>
-                                    )}
-                                    <div className="flex items-center justify-between">
-                                        <p className="text-xs text-muted-foreground">
-                                            Les modèles plus grands offrent une meilleure précision mais nécessitent plus de VRAM
-                                        </p>
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() => {
-                                                if (window.electronAPI && 'openModelsFolder' in window.electronAPI) {
-                                                    (window.electronAPI as { openModelsFolder: () => Promise<void> }).openModelsFolder()
-                                                }
-                                            }}
-                                            title="Ouvrir le dossier des modèles"
-                                        >
-                                            <FolderOpen className="h-4 w-4" />
-                                        </Button>
+                                        <div className="flex items-center text-sm text-muted-foreground">
+                                            <Info className="h-4 w-4 mr-2 flex-shrink-0" />
+                                            {t.largerModelsBetter}
+                                        </div>
                                     </div>
                                 </div>
                             )}
 
                             {/* API Key Input (Cloud mode only) */}
                             {useCloudMode && (
-                                <div className="space-y-2">
-                                    <Label htmlFor="api-key">Clé API OpenAI</Label>
+                                <div className="space-y-2 pt-2">
+                                    <Label>{t.apiKey}</Label>
                                     <Input
-                                        id="api-key"
                                         type="password"
-                                        placeholder="sk-..."
+                                        placeholder={t.apiKeyPlaceholder}
                                         value={apiKey}
                                         onChange={(e) => setApiKey(e.target.value)}
                                         disabled={isProcessing}
                                     />
                                     <p className="text-xs text-muted-foreground">
-                                        Votre clé est stockée localement et n'est jamais partagée
+                                        {t.apiKeyDescription}
                                     </p>
                                 </div>
                             )}
 
                             {/* Language Selection */}
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                                 <div className="space-y-2">
-                                    <Label htmlFor="language-select" className="flex items-center gap-2">
-                                        <Languages className="h-4 w-4" />
-                                        Langue source
-                                    </Label>
+                                    <Label>{t.sourceLanguage}</Label>
                                     <Select
-                                        id="language-select"
                                         value={sourceLanguage}
                                         onChange={(e) => setSourceLanguage(e.target.value)}
                                         disabled={isProcessing}
                                     >
-                                        {LANGUAGES.map((lang) => (
+                                        <option value="auto">{t.autoDetect}</option>
+                                        {SUPPORTED_LANGUAGES.map(lang => (
                                             <option key={lang.code} value={lang.code}>
                                                 {lang.name}
                                             </option>
@@ -922,18 +925,31 @@ function App() {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label className="flex items-center gap-2">
-                                        <RefreshCw className="h-4 w-4" />
-                                        Traduction
-                                    </Label>
-                                    <div className="flex items-center gap-2 h-10 px-3 rounded-md border bg-background">
-                                        <Switch
-                                            checked={translateToEnglish}
-                                            onCheckedChange={setTranslateToEnglish}
-                                            disabled={isProcessing}
-                                        />
-                                        <span className="text-sm">Traduire en anglais</span>
-                                    </div>
+                                    <Label>{t.exportFormat}</Label>
+                                    <Select
+                                        value={exportFormat}
+                                        onChange={(e) => setExportFormat(e.target.value)}
+                                        disabled={isProcessing}
+                                    >
+                                        <option value="txt">Texte (.txt)</option>
+                                        <option value="srt">Sous-titres (.srt)</option>
+                                        <option value="vtt">WebVTT (.vtt)</option>
+                                        <option value="json">JSON (.json)</option>
+                                        <option value="tsv">TSV (.tsv)</option>
+                                    </Select>
+                                </div>
+                            </div>
+
+                            {/* Translation Toggle */}
+                            <div className="flex items-center gap-2 pt-2">
+                                <div className="flex items-center space-x-2">
+                                    <Switch
+                                        id="translate-mode"
+                                        checked={translateToEnglish}
+                                        onCheckedChange={setTranslateToEnglish}
+                                        disabled={isProcessing}
+                                    />
+                                    <Label htmlFor="translate-mode">{t.translateToEnglish}</Label>
                                 </div>
                             </div>
 
@@ -966,20 +982,32 @@ function App() {
                             <div className="flex items-center justify-between">
                                 <div>
                                     <CardTitle className="text-lg">
-                                        {inputMode === 'record' ? 'Enregistrement audio' : 'Fichier à transcrire'}
+                                        {inputMode === 'record' ? t.audioRecording : t.fileToTranscribe}
                                     </CardTitle>
                                     <CardDescription>
                                         {inputMode === 'record'
-                                            ? 'Enregistrez de l\'audio directement depuis votre microphone'
-                                            : 'Glissez plusieurs fichiers pour activer le mode batch'}
+                                            ? t.recordFromMicrophone
+                                            : batchMode ? t.batchModeMultiple : t.dragMultipleForBatch}
                                     </CardDescription>
                                 </div>
-                                {batchMode && (
-                                    <div className="flex items-center gap-2 px-3 py-1 bg-primary/10 rounded-full">
-                                        <Layers className="h-4 w-4 text-primary" />
-                                        <span className="text-sm font-medium">{batchFiles.length} fichiers</span>
-                                    </div>
-                                )}
+                                <div className="flex items-center gap-2">
+                                    {batchMode && (
+                                        <div className="flex items-center gap-2 px-3 py-1 bg-primary/10 rounded-full">
+                                            <Layers className="h-4 w-4 text-primary" />
+                                            <span className="text-sm font-medium">{batchFiles.length} {t.filesSelected}</span>
+                                        </div>
+                                    )}
+                                    {/* Recording Mode Toggle in DropZone Header */}
+                                    <Button
+                                        variant={inputMode === 'record' ? "default" : "outline"}
+                                        size="sm"
+                                        onClick={() => setInputMode(inputMode === 'record' ? 'file' : 'record')}
+                                        className="gap-2"
+                                    >
+                                        <Mic className="h-4 w-4" />
+                                        {inputMode === 'record' ? t.audioRecording : "REC"}
+                                    </Button>
+                                </div>
                             </div>
                         </CardHeader>
                         <CardContent>
@@ -987,6 +1015,7 @@ function App() {
                                 <AudioRecorder
                                     onRecordingComplete={handleRecordingComplete}
                                     disabled={isProcessing}
+                                    translations={t}
                                 />
                             ) : (
                                 <DropZone
@@ -997,6 +1026,7 @@ function App() {
                                     onClear={handleClearFile}
                                     disabled={isProcessing}
                                     batchMode={batchMode}
+                                    translations={t}
                                 />
                             )}
 
@@ -1051,7 +1081,7 @@ function App() {
                             </CardHeader>
                             <CardContent className="space-y-3">
                                 <Progress value={progressInfo.progress} className="h-2" />
-                                <p className={`text-sm ${progressInfo.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+                                <p className={`text - sm ${progressInfo.status === 'error' ? 'text-destructive' : 'text-muted-foreground'} `}>
                                     {progressInfo.message}
                                 </p>
                             </CardContent>
@@ -1150,6 +1180,7 @@ declare global {
             onDownloadProgress?: (callback: (event: unknown, data: { model: string; progress: number; message: string }) => void) => void
             onDownloadComplete?: (callback: (event: unknown, data: { model: string; success: boolean }) => void) => void
             onModelsList?: (callback: (event: unknown, data: { models: Record<string, unknown> }) => void) => void
+            openModelsFolder?: () => Promise<boolean>
         }
     }
 }

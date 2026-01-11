@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react'
 import { Upload, FileAudio, FileVideo, X, Layers } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Translations } from '@/i18n'
 
 // Supported file formats for transcription
 const ACCEPTED_FORMATS = ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.mp4', '.mkv', '.mov', '.avi', '.webm']
@@ -15,6 +16,7 @@ interface DropZoneProps {
     onClear: () => void
     disabled?: boolean
     batchMode?: boolean
+    translations: Translations
 }
 
 /**
@@ -28,7 +30,8 @@ export function DropZone({
     batchFiles = [],
     onClear,
     disabled,
-    batchMode = false
+    batchMode = false,
+    translations: t
 }: DropZoneProps) {
     const [isDragging, setIsDragging] = useState(false)
 
@@ -95,7 +98,7 @@ export function DropZone({
                 <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                         <Layers className="h-5 w-5 text-primary" />
-                        <span className="font-medium">Mode Batch - {batchFiles.length} fichiers</span>
+                        <span className="font-medium">{t.batchModeMultiple} - {batchFiles.length} {t.filesSelected}</span>
                     </div>
                     <Button
                         variant="ghost"
@@ -104,7 +107,7 @@ export function DropZone({
                         disabled={disabled}
                     >
                         <X className="h-4 w-4 mr-1" />
-                        Effacer tout
+                        {t.clearAll}
                     </Button>
                 </div>
                 <div className="max-h-48 overflow-y-auto space-y-2">
@@ -124,7 +127,7 @@ export function DropZone({
                     ))}
                 </div>
                 <p className="text-xs text-muted-foreground mt-3 text-center">
-                    Glissez plus de fichiers pour les ajouter
+                    {t.dragMoreToAdd}
                 </p>
             </div>
         )
@@ -170,7 +173,7 @@ export function DropZone({
                                 {formatFileSize(selectedFile.size)}
                                 {isVideoFile(selectedFile) && (
                                     <span className="ml-2 text-xs bg-secondary px-2 py-0.5 rounded">
-                                        Vidéo → Audio
+                                        {t.audioExtraction}
                                     </span>
                                 )}
                             </p>
@@ -198,10 +201,10 @@ export function DropZone({
                     </div>
                     <div>
                         <p className="font-medium text-foreground">
-                            Glissez-déposez vos fichiers ici
+                            {t.dragDropFiles}
                         </p>
                         <p className="text-sm text-muted-foreground mt-1">
-                            ou cliquez pour sélectionner • <span className="text-primary">Mode batch avec plusieurs fichiers</span>
+                            {t.clickToSelect} • <span className="text-primary">{t.batchModeMultiple}</span>
                         </p>
                     </div>
                     <div className="flex flex-wrap justify-center gap-2 text-xs text-muted-foreground">

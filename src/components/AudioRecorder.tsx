@@ -1,27 +1,90 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Mic, Square, Pause, Play } from 'lucide-react'
+import { Mic, Square, Pause, Play, Volume2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Select } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
 interface AudioRecorderProps {
     onRecordingComplete: (audioBlob: Blob, filename: string) => void
     disabled?: boolean
+    translations?: {
+        startRecording: string
+        stopAndTranscribe: string
+        recording: string
+        paused: string
+        liveRecording: string
+        clickToStartRecording: string
+        selectMicrophone: string
+        listenRecording: string
+    }
+}
+
+interface AudioDevice {
+    deviceId: string
+    label: string
 }
 
 /**
  * Audio Recorder component for live recording and transcription
+ * Supports mic selection and playback of recorded audio
  */
-export function AudioRecorder({ onRecordingComplete, disabled }: AudioRecorderProps) {
+export function AudioRecorder({ onRecordingComplete, disabled, translations }: AudioRecorderProps) {
+    const t = translations || {
+        startRecording: 'Commencer l\'enregistrement',
+        stopAndTranscribe: 'Arrêter et transcrire',
+        recording: 'Enregistrement en cours...',
+        paused: 'En pause',
+        liveRecording: 'Enregistrement en direct',
+        clickToStartRecording: 'Cliquez pour commencer l\'enregistrement',
+        selectMicrophone: 'Sélectionner le microphone',
+        listenRecording: 'Écouter l\'enregistrement',
+    }
+
     const [isRecording, setIsRecording] = useState(false)
     const [isPaused, setIsPaused] = useState(false)
     const [recordingTime, setRecordingTime] = useState(0)
     const [audioLevel, setAudioLevel] = useState(0)
+    const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([])
+    const [selectedDevice, setSelectedDevice] = useState<string>('')
+    const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null)
+    const [isPlaying, setIsPlaying] = useState(false)
 
     const mediaRecorderRef = useRef<MediaRecorder | null>(null)
     const audioChunksRef = useRef<Blob[]>([])
     const timerRef = useRef<NodeJS.Timeout | null>(null)
     const analyserRef = useRef<AnalyserNode | null>(null)
     const animationFrameRef = useRef<number | null>(null)
+    const audioContextRef = useRef<AudioContext | null>(null)
+    const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
+    const streamRef = useRef<MediaStream | null>(null)
+
+    // Load available audio devices on mount
+    useEffect(() => {
+        loadAudioDevices()
+    }, [])
+
+    const loadAudioDevices = async () => {
+        try {
+            // Request permission first to get device labels
+            await navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => stream.getTracks().forEach(track => track.stop()))
+
+            const devices = await navigator.mediaDevices.enumerateDevices()
+            const audioInputs = devices
+                .filter(device => device.kind === 'audioinput')
+                .map(device => ({
+                    deviceId: device.deviceId,
+                    label: device.label || `Microphone ${device.deviceId.slice(0, 8)}`
+                }))
+
+            setAudioDevices(audioInputs)
+            if (audioInputs.length > 0 && !selectedDevice) {
+                setSelectedDevice(audioInputs[0].deviceId)
+            }
+        } catch (error) {
+            console.error('Error loading audio devices:', error)
+        }
+    }
 
     // Format time as MM:SS
     const formatTime = (seconds: number): string => {
@@ -44,16 +107,31 @@ export function AudioRecorder({ onRecordingComplete, disabled }: AudioRecorderPr
     // Start recording
     const startRecording = async () => {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
+            // Clear previous recording
+            if (recordedAudioUrl) {
+                URL.revokeObjectURL(recordedAudioUrl)
+                setRecordedAudioUrl(null)
+            }
+
+            const constraints: MediaStreamConstraints = {
+                audio: selectedDevice ? {
+                    deviceId: { exact: selectedDevice },
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    sampleRate: 44100
+                } : {
                     echoCancellation: true,
                     noiseSuppression: true,
                     sampleRate: 44100
                 }
-            })
+            }
+
+            const stream = await navigator.mediaDevices.getUserMedia(constraints)
+            streamRef.current = stream
 
             // Setup audio analyser for visualization
             const audioContext = new AudioContext()
+            audioContextRef.current = audioContext
             const source = audioContext.createMediaStreamSource(stream)
             const analyser = audioContext.createAnalyser()
             analyser.fftSize = 256
@@ -77,9 +155,15 @@ export function AudioRecorder({ onRecordingComplete, disabled }: AudioRecorderPr
             mediaRecorder.onstop = () => {
                 const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
                 const filename = `recording_${new Date().toISOString().replace(/[:.]/g, '-')}.webm`
+
+                // Create URL for playback
+                const url = URL.createObjectURL(audioBlob)
+                setRecordedAudioUrl(url)
+
+                // Send to parent
                 onRecordingComplete(audioBlob, filename)
 
-                // Cleanup
+                // Cleanup stream
                 stream.getTracks().forEach(track => track.stop())
                 if (animationFrameRef.current) {
                     cancelAnimationFrame(animationFrameRef.current)
@@ -113,6 +197,9 @@ export function AudioRecorder({ onRecordingComplete, disabled }: AudioRecorderPr
             clearInterval(timerRef.current)
             timerRef.current = null
         }
+        if (audioContextRef.current) {
+            audioContextRef.current.close()
+        }
         setIsRecording(false)
         setIsPaused(false)
         setAudioLevel(0)
@@ -126,13 +213,31 @@ export function AudioRecorder({ onRecordingComplete, disabled }: AudioRecorderPr
                 timerRef.current = setInterval(() => {
                     setRecordingTime(prev => prev + 1)
                 }, 1000)
+                animationFrameRef.current = requestAnimationFrame(updateAudioLevel)
             } else {
                 mediaRecorderRef.current.pause()
                 if (timerRef.current) {
                     clearInterval(timerRef.current)
                 }
+                if (animationFrameRef.current) {
+                    cancelAnimationFrame(animationFrameRef.current)
+                }
             }
             setIsPaused(!isPaused)
+        }
+    }
+
+    // Play recorded audio
+    const playRecording = () => {
+        if (audioPlayerRef.current && recordedAudioUrl) {
+            if (isPlaying) {
+                audioPlayerRef.current.pause()
+                audioPlayerRef.current.currentTime = 0
+                setIsPlaying(false)
+            } else {
+                audioPlayerRef.current.play()
+                setIsPlaying(true)
+            }
         }
     }
 
@@ -145,8 +250,14 @@ export function AudioRecorder({ onRecordingComplete, disabled }: AudioRecorderPr
             if (animationFrameRef.current) {
                 cancelAnimationFrame(animationFrameRef.current)
             }
+            if (recordedAudioUrl) {
+                URL.revokeObjectURL(recordedAudioUrl)
+            }
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach(track => track.stop())
+            }
         }
-    }, [])
+    }, [recordedAudioUrl])
 
     return (
         <div className={cn(
@@ -154,26 +265,69 @@ export function AudioRecorder({ onRecordingComplete, disabled }: AudioRecorderPr
             isRecording ? "border-red-500 bg-red-500/5" : "border-muted-foreground/25 hover:border-primary/50",
             disabled && "opacity-50 pointer-events-none"
         )}>
+            {/* Hidden audio player for playback */}
+            <audio
+                ref={audioPlayerRef}
+                src={recordedAudioUrl || undefined}
+                onEnded={() => setIsPlaying(false)}
+            />
+
+            {/* Microphone selection */}
+            {!isRecording && audioDevices.length > 1 && (
+                <div className="mb-4">
+                    <Select
+                        value={selectedDevice}
+                        onChange={(e) => setSelectedDevice(e.target.value)}
+                        className="w-full max-w-xs mx-auto"
+                    >
+                        {audioDevices.map(device => (
+                            <option key={device.deviceId} value={device.deviceId}>
+                                {device.label}
+                            </option>
+                        ))}
+                    </Select>
+                </div>
+            )}
+
             {!isRecording ? (
                 <div className="space-y-4">
                     <div className="mx-auto w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center">
                         <Mic className="h-8 w-8 text-red-500" />
                     </div>
                     <div>
-                        <p className="font-medium text-foreground">Enregistrement en direct</p>
+                        <p className="font-medium text-foreground">{t.liveRecording}</p>
                         <p className="text-sm text-muted-foreground mt-1">
-                            Cliquez pour commencer l'enregistrement
+                            {t.clickToStartRecording}
                         </p>
                     </div>
-                    <Button
-                        onClick={startRecording}
-                        variant="destructive"
-                        size="lg"
-                        disabled={disabled}
-                    >
-                        <Mic className="h-4 w-4 mr-2" />
-                        Commencer l'enregistrement
-                    </Button>
+
+                    <div className="flex justify-center gap-2">
+                        <Button
+                            onClick={startRecording}
+                            variant="destructive"
+                            size="lg"
+                            disabled={disabled}
+                        >
+                            <Mic className="h-4 w-4 mr-2" />
+                            {t.startRecording}
+                        </Button>
+
+                        {/* Play button for previous recording */}
+                        {recordedAudioUrl && (
+                            <Button
+                                onClick={playRecording}
+                                variant="outline"
+                                size="lg"
+                            >
+                                {isPlaying ? (
+                                    <Square className="h-4 w-4 mr-2" />
+                                ) : (
+                                    <Volume2 className="h-4 w-4 mr-2" />
+                                )}
+                                {t.listenRecording}
+                            </Button>
+                        )}
+                    </div>
                 </div>
             ) : (
                 <div className="space-y-4">
@@ -205,7 +359,7 @@ export function AudioRecorder({ onRecordingComplete, disabled }: AudioRecorderPr
                     </div>
 
                     <p className="text-sm text-muted-foreground">
-                        {isPaused ? "En pause" : "Enregistrement en cours..."}
+                        {isPaused ? t.paused : t.recording}
                     </p>
 
                     {/* Controls */}
@@ -227,7 +381,7 @@ export function AudioRecorder({ onRecordingComplete, disabled }: AudioRecorderPr
                             size="lg"
                         >
                             <Square className="h-4 w-4 mr-2" />
-                            Arrêter et transcrire
+                            {t.stopAndTranscribe}
                         </Button>
                     </div>
                 </div>
