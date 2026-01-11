@@ -1,3 +1,3 @@
 git add .
-git commit -m "feat: fix electron build, add performance modes, stats metrics and settings page"
-git push origin main
+git commit -m "fix: models list dropdown population by safely parsing JSON lines in electron IPC"
+git push origin master

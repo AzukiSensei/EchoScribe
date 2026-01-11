@@ -344,16 +344,27 @@ ipcMain.handle('models:list', () => {
     })
 
     process.stdout.on('data', (data) => {
-        try {
-            const parsed = JSON.parse(data.toString())
-            if (parsed.type === 'models_list') {
-                mainWindow.webContents.send('models:list', {
-                    models: parsed.models
-                })
+        const lines = data.toString().split('\n').filter(line => line.trim())
+        for (const line of lines) {
+            try {
+                const parsed = JSON.parse(line)
+                if (parsed.type === 'models_list') {
+                    mainWindow.webContents.send('models:list', {
+                        models: parsed.models
+                    })
+                }
+            } catch (e) {
+                console.log('Models list output:', line)
             }
-        } catch (e) {
-            console.log('Models list output:', data.toString())
         }
+    })
+
+    process.stderr.on('data', (data) => {
+        console.error('Models list stderr:', data.toString())
+    })
+
+    process.on('error', (err) => {
+        console.error('Failed to list models:', err)
     })
 })
 
