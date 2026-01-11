@@ -1256,17 +1256,24 @@ function App() {
                                 </CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-3">
-                                <Progress value={progressInfo.progress} className="h-2" />
+                                <div className="relative">
+                                    <Progress value={progressInfo.progress} className="h-2" />
+                                    {progressInfo.status !== 'error' && progressInfo.status !== 'complete' && (
+                                        <div className="absolute -top-5 right-0 text-xs text-muted-foreground">
+                                            {Math.round(progressInfo.progress)}%
+                                        </div>
+                                    )}
+                                </div>
                                 <div className="flex justify-between items-start text-sm text-muted-foreground">
                                     <p className={progressInfo.status === 'error' ? 'text-destructive' : ''}>
                                         {progressInfo.message}
                                     </p>
                                     <div className="text-right text-xs">
-                                        {progressInfo.speed !== undefined && (
-                                            <div>Vitesse: {progressInfo.speed}x</div>
+                                        {progressInfo.speed !== undefined && progressInfo.speed > 0 && (
+                                            <div>Vitesse: {(progressInfo.speed * 60).toFixed(1)} min/s</div>
                                         )}
                                         {progressInfo.etr !== undefined && progressInfo.etr > 0 && (
-                                            <div>Temps restant: ~{Math.round(progressInfo.etr)}s</div>
+                                            <div>Temps restant: {Math.floor(progressInfo.etr / 60)}:{String(Math.round(progressInfo.etr % 60)).padStart(2, '0')}</div>
                                         )}
                                         {progressInfo.system_stats && (
                                             <div className="mt-1 text-[10px] opacity-70">
