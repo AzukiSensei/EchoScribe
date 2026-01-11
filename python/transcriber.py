@@ -513,6 +513,19 @@ def transcribe_local(
     
     send_progress(30, f'Chargement du modèle {model_name}...', 'transcribing')
     
+    # Check audio duration to detect very long files
+    audio_duration_minutes = 0
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', audio_path],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            audio_duration_minutes = float(result.stdout.strip()) / 60
+    except:
+        pass
+    
     # Determine device and compute type based on mode
     if device_mode == 'performance':
         device = 'cuda'
@@ -538,6 +551,13 @@ def transcribe_local(
     if model_name == 'large-v3-turbo' and device == 'cuda' and compute_type == 'float16':
         compute_type = 'int8_float16'
         print(f"[WORKAROUND] Using int8_float16 for large-v3-turbo to avoid CUDA crash", file=sys.stderr)
+    
+    # WORKAROUND: Very long files (>60 min) may crash with int8_float16
+    # Use pure int8 on CUDA for maximum stability (still uses GPU)
+    if audio_duration_minutes > 60 and device == 'cuda' and model_name == 'large-v3-turbo':
+        compute_type = 'int8'
+        send_progress(33, f'Fichier long ({int(audio_duration_minutes)}min) - mode int8 GPU...', 'transcribing')
+        print(f"[WORKAROUND] Long file ({audio_duration_minutes:.1f}min) - using pure int8 on CUDA", file=sys.stderr)
         
     try:
         # Determine model path
