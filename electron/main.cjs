@@ -20,6 +20,10 @@ const path = require('path')
 const { spawn } = require('child_process')
 const fs = require('fs')
 
+// Disable GPU cache to avoid Windows permission errors
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache')
+app.commandLine.appendSwitch('disable-gpu-program-cache')
+
 // Keep a global reference of the window object
 let mainWindow = null
 

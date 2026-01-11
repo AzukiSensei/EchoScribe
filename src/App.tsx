@@ -184,6 +184,7 @@ function App() {
     const [availableModels, setAvailableModels] = useState<Record<string, ModelInfo>>({})
     const [downloadingModel, setDownloadingModel] = useState<string | null>(null)
     const [downloadProgress, setDownloadProgress] = useState(0)
+    const [downloadedModels, setDownloadedModels] = useState<Set<string>>(new Set())
 
     // History
     const [history, setHistory] = useState<HistoryItem[]>([])
@@ -304,6 +305,8 @@ function App() {
                         description: `Le modèle ${data.model} est prêt à l'emploi.`,
                         variant: 'success'
                     })
+                    // Add to downloaded models set
+                    setDownloadedModels(prev => new Set([...prev, data.model]))
                     // Refresh models list
                     refreshModels()
                 }
@@ -443,15 +446,44 @@ function App() {
 
     // Download model
     const handleDownloadModel = useCallback((modelName: string) => {
+        console.log('Attempting to download model:', modelName)
+
         if (window.electronAPI?.downloadModel) {
+            console.log('Calling electronAPI.downloadModel')
             setDownloadingModel(modelName)
             setDownloadProgress(0)
             window.electronAPI.downloadModel(modelName)
-        } else {
+
             toast({
-                title: 'Téléchargement simulé',
-                description: `En mode développement, le téléchargement de ${modelName} est simulé.`,
+                title: 'Téléchargement démarré',
+                description: `Téléchargement du modèle ${modelName} en cours...`,
             })
+        } else {
+            console.log('electronAPI.downloadModel not available')
+            // Simulate download for development
+            setDownloadingModel(modelName)
+            setDownloadProgress(0)
+
+            toast({
+                title: 'Mode développement',
+                description: `Simulation du téléchargement de ${modelName}...`,
+            })
+
+            // Simulate progress
+            let progress = 0
+            const interval = setInterval(() => {
+                progress += 10
+                setDownloadProgress(progress)
+                if (progress >= 100) {
+                    clearInterval(interval)
+                    setDownloadingModel(null)
+                    toast({
+                        title: 'Téléchargé (simulé)',
+                        description: `${modelName} est prêt.`,
+                        variant: 'success'
+                    })
+                }
+            }, 300)
         }
     }, [toast])
 
@@ -741,19 +773,25 @@ function App() {
                                                 ))
                                             }
                                         </Select>
-                                        <Button
-                                            variant="outline"
-                                            size="icon"
-                                            onClick={() => handleDownloadModel(selectedModel)}
-                                            disabled={isProcessing || downloadingModel !== null}
-                                            title="Télécharger le modèle"
-                                        >
-                                            {downloadingModel === selectedModel ? (
-                                                <Loader2 className="h-4 w-4 animate-spin" />
-                                            ) : (
-                                                <Download className="h-4 w-4" />
-                                            )}
-                                        </Button>
+                                        {downloadedModels.has(selectedModel) || availableModels[selectedModel]?.downloaded ? (
+                                            <div className="flex items-center justify-center w-10 h-10 rounded-md border bg-green-500/10 text-green-500" title="Modèle téléchargé">
+                                                <Check className="h-4 w-4" />
+                                            </div>
+                                        ) : (
+                                            <Button
+                                                variant="outline"
+                                                size="icon"
+                                                onClick={() => handleDownloadModel(selectedModel)}
+                                                disabled={isProcessing || downloadingModel !== null}
+                                                title="Télécharger le modèle"
+                                            >
+                                                {downloadingModel === selectedModel ? (
+                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                    <Download className="h-4 w-4" />
+                                                )}
+                                            </Button>
+                                        )}
                                     </div>
                                     {downloadingModel && (
                                         <div className="space-y-1">

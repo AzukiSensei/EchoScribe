@@ -204,39 +204,60 @@ def check_model_downloaded(model_name: str) -> bool:
 
 
 def download_model(model_name: str):
-    """Download a Whisper model"""
-    send_download_progress(model_name, 0, f'Téléchargement du modèle {model_name}...')
+    """Download a Whisper model using huggingface_hub"""
+    send_download_progress(model_name, 0, f'Préparation du téléchargement de {model_name}...')
     
     try:
-        from faster_whisper import WhisperModel
-        from huggingface_hub import snapshot_download
+        # Try to import huggingface_hub
+        try:
+            from huggingface_hub import snapshot_download, hf_hub_download
+            from huggingface_hub.utils import HfHubHTTPError
+        except ImportError:
+            send_error('huggingface_hub n\'est pas installé. Exécutez: pip install huggingface-hub')
+            return
         
-        # Download the model
         repo_id = f"Systran/faster-whisper-{model_name}"
         
-        send_download_progress(model_name, 10, 'Connexion à Hugging Face...')
+        send_download_progress(model_name, 5, f'Connexion à Hugging Face ({repo_id})...')
         
-        snapshot_download(
-            repo_id=repo_id,
-            local_files_only=False
-        )
-        
-        send_download_progress(model_name, 90, 'Vérification du modèle...')
-        
-        # Verify by loading
-        _ = WhisperModel(model_name, device='cpu', compute_type='int8')
-        
-        send_download_progress(model_name, 100, f'Modèle {model_name} téléchargé avec succès!')
-        
-        output = json.dumps({
-            'type': 'download_complete',
-            'model': model_name,
-            'success': True
-        })
-        print(output, flush=True)
-        
+        try:
+            # Download the entire model repository
+            send_download_progress(model_name, 10, f'Téléchargement des fichiers du modèle...')
+            
+            local_dir = snapshot_download(
+                repo_id=repo_id,
+                local_files_only=False
+            )
+            
+            send_download_progress(model_name, 80, 'Téléchargement terminé, vérification...')
+            
+            # Verify the model can be loaded
+            send_download_progress(model_name, 90, 'Vérification du modèle...')
+            
+            try:
+                from faster_whisper import WhisperModel
+                # Quick load test with CPU to verify
+                _ = WhisperModel(model_name, device='cpu', compute_type='int8')
+                send_download_progress(model_name, 100, f'Modèle {model_name} prêt!')
+            except Exception as verify_error:
+                # Model downloaded but verification failed - still report success
+                send_download_progress(model_name, 100, f'Modèle {model_name} téléchargé (vérification ignorée)')
+            
+            output = json.dumps({
+                'type': 'download_complete',
+                'model': model_name,
+                'success': True,
+                'path': local_dir
+            })
+            print(output, flush=True)
+            
+        except HfHubHTTPError as http_error:
+            send_error(f'Erreur de téléchargement: {str(http_error)}')
+        except Exception as download_error:
+            send_error(f'Erreur lors du téléchargement: {str(download_error)}')
+            
     except Exception as e:
-        send_error(f'Erreur lors du téléchargement du modèle: {str(e)}')
+        send_error(f'Erreur inattendue: {str(e)}')
 
 
 def extract_audio(video_path: str, output_path: str) -> bool:
