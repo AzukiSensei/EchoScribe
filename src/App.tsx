@@ -56,6 +56,12 @@ interface ProgressInfo {
     progress: number
     message: string
     model?: string
+    system_stats?: {
+        ram_used: number
+        ram_total: number
+        vram_used: number
+        vram_total: number
+    }
 }
 
 interface DownloadProgress {
@@ -86,6 +92,8 @@ const EXPORT_FORMATS = [
     { id: 'txt', name: 'Texte (.txt)', icon: FileText },
     { id: 'srt', name: 'Sous-titres (.srt)', icon: FileText },
     { id: 'vtt', name: 'WebVTT (.vtt)', icon: FileText },
+    { id: 'json', name: 'JSON (.json)', icon: FileText },
+    { id: 'tsv', name: 'TSV (.tsv)', icon: FileText },
 ]
 
 /**
@@ -130,6 +138,27 @@ function segmentsToVTT(segments: Segment[]): string {
         const start = formatTimestampVTT(seg.start)
         const end = formatTimestampVTT(seg.end)
         lines.push(`${start} --> ${end} \n${seg.text.trim()} \n`)
+    })
+    return lines.join('\n')
+}
+
+/**
+ * Convert segments to JSON format
+ */
+function segmentsToJSON(segments: Segment[], language: string): string {
+    return JSON.stringify({
+        language,
+        segments: segments
+    }, null, 2)
+}
+
+/**
+ * Convert segments to TSV format
+ */
+function segmentsToTSV(segments: Segment[]): string {
+    const lines = ['start\tend\ttext']
+    segments.forEach(seg => {
+        lines.push(`${seg.start}\t${seg.end}\t${seg.text.replace(/\t/g, ' ')}`)
     })
     return lines.join('\n')
 }
@@ -193,7 +222,8 @@ function App() {
     const [translateToEnglish, setTranslateToEnglish] = useState(() => {
         return localStorage.getItem('echoscribe_translate') === 'true'
     })
-    const [exportFormat, setExportFormat] = useState('txt')
+    const [exportFormat, setExportFormat] = useState('txt') // This is used
+
 
     // Progress state
     const [progressInfo, setProgressInfo] = useState<ProgressInfo>({
@@ -216,6 +246,7 @@ function App() {
     // History
     const [history, setHistory] = useState<HistoryItem[]>([])
     const [showHistory, setShowHistory] = useState(false)
+    const [showSettings, setShowSettings] = useState(false)
 
     // Settings panel visibility
     const [showAdvanced, setShowAdvanced] = useState(false)
@@ -241,6 +272,15 @@ function App() {
 
     // Save all settings to localStorage
     useEffect(() => {
+        // Auto-install Python dependencies on startup
+        if (window.electronAPI?.installPythonDeps) {
+            window.electronAPI.installPythonDeps().then(() => {
+                console.log('Python dependencies installed/verified')
+            }).catch(err => {
+                console.error('Failed to install Python dependencies:', err)
+            })
+        }
+
         localStorage.setItem('echoscribe_api_key', apiKey)
     }, [apiKey])
 
@@ -274,11 +314,12 @@ function App() {
         if (!window.electronAPI) return
 
         // Progress updates
-        const handleProgress = (_event: unknown, data: { progress: number; message: string; stage: string }) => {
+        const handleProgress = (_event: unknown, data: { progress: number; message: string; stage: string; system_stats?: { ram_used: number; ram_total: number; vram_used: number; vram_total: number } }) => {
             setProgressInfo({
                 status: data.stage === 'extracting' ? 'extracting' : 'transcribing',
                 progress: data.progress,
-                message: data.message
+                message: data.message,
+                system_stats: data.system_stats
             })
         }
 
@@ -517,7 +558,8 @@ function App() {
     }, [toast, t])
 
     // Export transcription
-    const handleExport = useCallback(async (format: 'txt' | 'srt' | 'vtt') => {
+    // Export transcription
+    const handleExport = useCallback(async (format: 'txt' | 'srt' | 'vtt' | 'json' | 'tsv') => {
         if (!transcriptionResult && segments.length === 0) return
 
         let content: string
@@ -536,6 +578,16 @@ function App() {
                 content = segmentsToVTT(segments)
                 filename = `${baseName}.vtt`
                 mimeType = 'text/vtt'
+                break
+            case 'json':
+                content = segmentsToJSON(segments, detectedLanguage)
+                filename = `${baseName}.json`
+                mimeType = 'application/json'
+                break
+            case 'tsv':
+                content = segmentsToTSV(segments)
+                filename = `${baseName}.tsv`
+                mimeType = 'text/tab-separated-values'
                 break
             default:
                 content = transcriptionResult
@@ -638,12 +690,53 @@ function App() {
     }, [])
 
     // Handle recording complete
-    const handleRecordingComplete = useCallback((audioBlob: Blob, filename: string) => {
-        // Create a File from the Blob
-        const file = new File([audioBlob], filename, { type: 'audio/webm' })
-        setSelectedFile(file)
-        setInputMode('file') // Switch back to file mode to show the file
-    }, [])
+    const handleRecordingComplete = useCallback(async (audioBlob: Blob, filename: string) => {
+        try {
+            // Convert Blob to ArrayBuffer
+            const arrayBuffer = await audioBlob.arrayBuffer()
+
+            // Save to temp file
+            if (window.electronAPI?.saveTempFile) {
+                const result = await window.electronAPI.saveTempFile(arrayBuffer, filename)
+
+                if (result.success && result.path) {
+                    // Create a File-like object with the path
+                    // We can't set path on a File object directly in browser/renderer usually
+                    // But for our app's logic, we need to ensure we pass the path to the transcriber
+                    // We'll attach the path as a custom property or just rely on the existing logic if it checks file.path
+
+                    // Create a file object - typically in Electron if we select it via dialog it has .path
+                    // Here we create one from memory but we know the path.
+                    // We can try to define the property.
+                    const file = new File([audioBlob], filename, { type: 'audio/webm' })
+                    Object.defineProperty(file, 'path', {
+                        value: result.path,
+                        writable: false
+                    })
+
+                    setSelectedFile(file)
+                    setInputMode('file')
+
+                    toast({
+                        title: t.success,
+                        description: t.recordingSaved,
+                        variant: 'success'
+                    })
+                } else {
+                    throw new Error(result.error || 'Failed to save recording')
+                }
+            } else {
+                throw new Error('Electron API not available')
+            }
+        } catch (error) {
+            console.error('Error saving recording:', error)
+            toast({
+                title: t.error,
+                description: String(error),
+                variant: 'destructive'
+            })
+        }
+    }, [t])
 
     // Show setup wizard on first launch
     if (!setupComplete) {
@@ -839,7 +932,7 @@ function App() {
                                                 >
                                                     {availableModels.map(model => (
                                                         <option key={model.name} value={model.name}>
-                                                            {model.name} ({model.size})
+                                                            {model.name} (Size: {model.size} | VRAM: {model.vram || 'N/A'})
                                                         </option>
                                                     ))}
                                                 </Select>
@@ -949,7 +1042,12 @@ function App() {
                                         onCheckedChange={setTranslateToEnglish}
                                         disabled={isProcessing}
                                     />
-                                    <Label htmlFor="translate-mode">{t.translateToEnglish}</Label>
+                                    <Label htmlFor="translate-mode">
+                                        {t.translateToEnglish}
+                                        <span className="ml-2 text-xs text-muted-foreground font-normal">
+                                            (X &rarr; English only)
+                                        </span>
+                                    </Label>
                                 </div>
                             </div>
 
@@ -1160,6 +1258,7 @@ function App() {
 declare global {
     interface Window {
         electronAPI?: {
+            installPythonDeps?: () => Promise<{ success: boolean; error?: string }>
             selectFile: () => Promise<string | null>
             startTranscription: (config: {
                 filePath: string
@@ -1174,7 +1273,8 @@ declare global {
             listModels: () => void
             downloadModel: (modelName: string) => void
             saveFile: (content: string, filename: string, format: string) => Promise<void>
-            onProgress: (callback: (event: unknown, data: { progress: number; message: string; stage: string }) => void) => void
+            saveTempFile: (buffer: ArrayBuffer, filename: string) => Promise<{ success: boolean; path?: string; error?: string }>
+            onProgress: (callback: (event: unknown, data: { progress: number; message: string; stage: string; system_stats?: { ram_used: number; ram_total: number; vram_used: number; vram_total: number } }) => void) => void
             onComplete: (callback: (event: unknown, data: { text: string; segments?: Array<{ start: number; end: number; text: string }>; detected_language?: string }) => void) => void
             onError: (callback: (event: unknown, data: { error: string }) => void) => void
             onDownloadProgress?: (callback: (event: unknown, data: { model: string; progress: number; message: string }) => void) => void

@@ -403,30 +403,65 @@ ipcMain.handle('models:download', (event, modelName) => {
 })
 
 /**
- * Open the models folder in file explorer
+ * Save temporary file (e.g. for recordings)
  */
-ipcMain.handle('models:openFolder', async () => {
-    const { shell } = require('electron')
-    // HuggingFace cache is in user home, not APPDATA
-    const homeDir = process.env.USERPROFILE || process.env.HOME
-    const modelsPath = path.join(homeDir, '.cache', 'huggingface', 'hub')
-
-    // Try to open the cache folder, or create it if it doesn't exist
-    if (fs.existsSync(modelsPath)) {
-        await shell.openPath(modelsPath)
-    } else {
-        // Try alternate location
-        const altPath = path.join(homeDir, '.cache', 'huggingface')
-        if (fs.existsSync(altPath)) {
-            await shell.openPath(altPath)
-        } else {
-            // Create the folder
-            fs.mkdirSync(modelsPath, { recursive: true })
-            await shell.openPath(modelsPath)
+ipcMain.handle('file:saveTemp', async (event, { buffer, filename }) => {
+    try {
+        const tempDir = app.getPath('temp')
+        // Create a unique folder for our app if it doesn't exist
+        const appTempDir = path.join(tempDir, 'echoscribe_recordings')
+        if (!fs.existsSync(appTempDir)) {
+            fs.mkdirSync(appTempDir, { recursive: true })
         }
+
+        const filePath = path.join(appTempDir, filename)
+
+        // Convert array buffer to buffer
+        const data = Buffer.from(buffer)
+        fs.writeFileSync(filePath, data)
+
+        return { success: true, path: filePath }
+    } catch (error) {
+        console.error('Error saving temp file:', error)
+        return { success: false, error: error.message }
     }
 })
 
+/**
+ * Open the models folder in file explorer
+ */
+    }
+})
+
+/**
+ * Install Python dependencies
+ */
+ipcMain.handle('python:install-deps', async () => {
+    return new Promise((resolve) => {
+        const pythonPath = getPythonPath()
+        const requirementsPath = path.join(getScriptPath(), 'requirements.txt')
+
+        console.log(`Installing dependencies from ${requirementsPath}...`)
+
+        const process = spawn(pythonPath, ['-m', 'pip', 'install', '-r', requirementsPath])
+
+        process.stdout.on('data', (data) => {
+            console.log(`Pip output: ${data.toString()}`)
+        })
+
+        process.stderr.on('data', (data) => {
+            console.error(`Pip error: ${data.toString()}`)
+        })
+
+        process.on('close', (code) => {
+            if (code === 0) {
+                resolve({ success: true })
+            } else {
+                resolve({ success: false, error: `Pip exited with code ${code}` })
+            }
+        })
+    })
+})
 /**
  * Check system dependencies
  */

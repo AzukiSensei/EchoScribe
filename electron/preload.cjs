@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveFile: (content, filename, format) => ipcRenderer.invoke('file:save', { content, filename, format }),
 
     /**
+     * Save temporary file (for recordings)
+     */
+    saveTempFile: (buffer, filename) => ipcRenderer.invoke('file:saveTemp', { buffer, filename }),
+
+    /**
      * Start the transcription process
      */
     startTranscription: (config) => ipcRenderer.invoke('transcribe:start', config),
@@ -58,6 +63,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
      * Install a dependency
      */
     installDependency: (dependency) => ipcRenderer.invoke('system:installDependency', dependency),
+
+    /**
+     * Install all Python dependencies from requirements.txt
+     */
+    installPythonDeps: () => ipcRenderer.invoke('python:install-deps'),
 
     /**
      * Progress updates

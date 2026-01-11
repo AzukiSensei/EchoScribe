@@ -127,6 +127,8 @@ export interface Translations {
     fileSaved: string
     modelDownloadComplete: string
     openFolderError: string
+    success: string
+    recordingSaved: string
 }
 
 const translations: Record<Language, Translations> = {
@@ -214,6 +216,9 @@ const translations: Record<Language, Translations> = {
         fileSaved: 'File saved',
         modelDownloadComplete: 'Model download complete',
         openFolderError: 'Could not open folder',
+        success: 'Success',
+        recordingSaved: 'Recording saved successfully',
+        includeSystemAudio: 'Include system audio',
     },
     fr: {
         appName: 'EchoScribe',
@@ -299,6 +304,9 @@ const translations: Record<Language, Translations> = {
         fileSaved: 'Fichier sauvegardé',
         modelDownloadComplete: 'Modèle téléchargé',
         openFolderError: 'Impossible d\'ouvrir le dossier',
+        success: 'Succès',
+        recordingSaved: 'Enregistrement sauvegardé avec succès',
+        includeSystemAudio: 'Inclure le son système',
     },
     es: {
         appName: 'EchoScribe',
@@ -384,6 +392,8 @@ const translations: Record<Language, Translations> = {
         fileSaved: 'Archivo guardado',
         modelDownloadComplete: 'Modelo descargado',
         openFolderError: 'No se pudo abrir la carpeta',
+        success: 'Éxito',
+        recordingSaved: 'Grabación guardada con éxito',
     },
     zh: {
         appName: 'EchoScribe',
@@ -469,6 +479,8 @@ const translations: Record<Language, Translations> = {
         fileSaved: '文件已保存',
         modelDownloadComplete: '模型下载完成',
         openFolderError: '无法打开文件夹',
+        success: '成功',
+        recordingSaved: '录音已保存',
     },
     ar: {
         appName: 'EchoScribe',
@@ -554,6 +566,9 @@ const translations: Record<Language, Translations> = {
         fileSaved: 'تم حفظ الملف',
         modelDownloadComplete: 'اكتمل تحميل النموذج',
         openFolderError: 'تعذر فتح المجلد',
+        success: 'نجاح',
+        recordingSaved: 'تم حفظ التسجيل بنجاح',
+        includeSystemAudio: 'تضمين صوت النظام',
     },
     pt: {
         appName: 'EchoScribe',
@@ -639,6 +654,9 @@ const translations: Record<Language, Translations> = {
         fileSaved: 'Arquivo salvo',
         modelDownloadComplete: 'Download do modelo concluído',
         openFolderError: 'Não foi possível abrir a pasta',
+        success: 'Sucesso',
+        recordingSaved: 'Gravação salva com sucesso',
+        includeSystemAudio: 'Incluir áudio do sistema',
     },
     ru: {
         appName: 'EchoScribe',
@@ -724,6 +742,8 @@ const translations: Record<Language, Translations> = {
         fileSaved: 'Файл сохранён',
         modelDownloadComplete: 'Модель загружена',
         openFolderError: 'Не удалось открыть папку',
+        success: 'Успех',
+        recordingSaved: 'Запись сохранена успешно',
     },
     de: {
         appName: 'EchoScribe',
@@ -809,6 +829,9 @@ const translations: Record<Language, Translations> = {
         fileSaved: 'Datei gespeichert',
         modelDownloadComplete: 'Modell-Download abgeschlossen',
         openFolderError: 'Ordner konnte nicht geöffnet werden',
+        success: 'Erfolg',
+        recordingSaved: 'Aufnahme erfolgreich gespeichert',
+        includeSystemAudio: 'Systemaudio aufnehmen',
     },
     ja: {
         appName: 'EchoScribe',
@@ -894,6 +917,8 @@ const translations: Record<Language, Translations> = {
         fileSaved: 'ファイル保存済み',
         modelDownloadComplete: 'モデルダウンロード完了',
         openFolderError: 'フォルダを開けませんでした',
+        success: '成功',
+        recordingSaved: '録音が保存されました',
     },
 }
 

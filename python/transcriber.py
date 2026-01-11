@@ -32,6 +32,41 @@ import argparse
 import json
 import os
 import sys
+
+# Fix for Windows symlink permission error in Hugging Face Hub
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+# Ensure we don't try to use symlinks if developer mode is not enabled
+os.environ["HF_HUB_CACHE_SYMLINKS"] = "0"
+
+# Add NVIDIA libraries from pip packages to PATH (for Windows)
+if sys.platform == 'win32':
+    import site
+    import glob
+    
+    # Common locations for site-packages
+    site_packages_dirs = site.getsitepackages()
+    user_site = site.getusersitepackages()
+    if isinstance(user_site, str):
+        site_packages_dirs.append(user_site)
+        
+    for sp in site_packages_dirs:
+        # Add nvidia-cublas and nvidia-cudnn bin directories if they exist
+        nvidia_dirs = [
+             os.path.join(sp, 'nvidia', 'cublas', 'bin'),
+             os.path.join(sp, 'nvidia', 'cudnn', 'bin'),
+             os.path.join(sp, 'nvidia', 'cuda_runtime', 'bin') 
+        ]
+        
+        for p in nvidia_dirs:
+            if os.path.exists(p) and p not in os.environ['PATH']:
+                try:
+                    os.environ['PATH'] = p + os.pathsep + os.environ['PATH']
+                    # Also try to add via ctypes for immediate DLL loading awareness
+                    if hasattr(os, 'add_dll_directory'):
+                         os.add_dll_directory(p)
+                except Exception:
+                    pass
+
 import subprocess
 import tempfile
 from pathlib import Path
@@ -53,6 +88,10 @@ WHISPER_MODELS = {
     'large-v3': {'size': '~3.1 GB', 'vram': '~6 GB'},
     'large-v3-turbo': {'size': '~1.6 GB', 'vram': '~6 GB'},
 }
+
+# Custom model directory (User requested Documents/Models)
+MODELS_DIR = os.path.join(os.path.expanduser('~'), 'Documents', 'Models')
+os.makedirs(MODELS_DIR, exist_ok=True)
 
 # Supported languages (ISO 639-1 codes)
 SUPPORTED_LANGUAGES = {
@@ -81,6 +120,54 @@ def send_progress(progress: int, message: str, stage: str = 'transcribing'):
         'message': message,
         'stage': stage
     })
+    print(output, flush=True)
+
+
+def get_system_stats():
+    """Get current RAM and VRAM usage"""
+    stats = {}
+    
+    # RAM (psutil is standard)
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        stats['ram_used'] = round(mem.used / (1024**3), 1)
+        stats['ram_total'] = round(mem.total / (1024**3), 1)
+    except ImportError:
+        pass
+        
+    # VRAM (pynvml for NVIDIA)
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        stats['vram_used'] = round(info.used / (1024**3), 1)
+        stats['vram_total'] = round(info.total / (1024**3), 1)
+        # pynvml.nvmlShutdown() # Keep open?
+    except Exception:
+        pass
+        
+    return stats if stats else None
+
+
+def send_progress(progress: int, message: str, stage: str = 'transcribing'):
+    """Send progress update to Electron via stdout"""
+    data = {
+        'type': 'progress',
+        'progress': progress,
+        'message': message,
+        'stage': stage
+    }
+    
+    try:
+        stats = get_system_stats()
+        if stats:
+            data['system_stats'] = stats
+    except Exception:
+        pass
+        
+    output = json.dumps(data)
     print(output, flush=True)
 
 
@@ -248,7 +335,7 @@ def download_model(model_name: str):
             try:
                 from faster_whisper import WhisperModel
                 # Quick load test with CPU to verify
-                _ = WhisperModel(model_name, device='cpu', compute_type='int8')
+                _ = WhisperModel(model_name, device='cpu', compute_type='int8', download_root=MODELS_DIR)
                 send_download_progress(model_name, 100, f'Modèle {model_name} prêt!')
             except Exception as verify_error:
                 # Model downloaded but verification failed - still report success
@@ -393,28 +480,46 @@ def transcribe_local(
                 compute_type = 'int8'
                 send_progress(32, 'GPU non disponible, utilisation du CPU...', 'transcribing')
         except ImportError:
-            device = 'cpu'
-            compute_type = 'int8'
+            # If torch is missing but we're here, faster-whisper is present.
+            # We assume CUDA is available unless init fails.
+            pass
         
-        # Load the model
-        # Load the model with CPU fallback
+        # Load the model with robust fallback
         try:
+            # First attempt with determined device (CUDA by default)
+            print(f"Initializing model on {device} with {compute_type} (path: {MODELS_DIR})...", file=sys.stderr)
             if custom_model_path:
                 model = WhisperModel(custom_model_path, device=device, compute_type=compute_type)
             else:
-                model = WhisperModel(model_name, device=device, compute_type=compute_type)
+                model = WhisperModel(model_name, device=device, compute_type=compute_type, download_root=MODELS_DIR)
+                
         except Exception as e:
+            # Robust fallback for ANY initialization error on CUDA
             error_str = str(e).lower()
-            if 'cublas' in error_str or 'cuda' in error_str or 'dll' in error_str:
-                send_progress(35, 'Erreur CUDA détectée (DLL manquante?), passage en mode CPU...', 'transcribing')
-                print(f"CUDA Error: {e}, falling back to CPU", file=sys.stderr)
+            print(f"Model initialization error on {device}: {e}", file=sys.stderr)
+            
+            if device == 'cuda':
+                send_progress(35, 'Erreur GPU détectée, bascule vers CPU...', 'transcribing')
+                print("Falling back to CPU...", file=sys.stderr)
                 device = 'cpu'
                 compute_type = 'int8'
-                if custom_model_path:
-                    model = WhisperModel(custom_model_path, device=device, compute_type=compute_type)
-                else:
-                    model = WhisperModel(model_name, device=device, compute_type=compute_type)
+                
+                # Second attempt on CPU
+                try:
+                    if custom_model_path:
+                        model = WhisperModel(custom_model_path, device=device, compute_type=compute_type)
+                    else:
+                        model = WhisperModel(model_name, device=device, compute_type=compute_type, download_root=MODELS_DIR)
+                except Exception as e2:
+                    # Third attempt: Force hide CUDA
+                    print(f"CPU fallback also failed: {e2}. Trying with CUDA_VISIBLE_DEVICES=''...", file=sys.stderr)
+                    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+                    if custom_model_path:
+                        model = WhisperModel(custom_model_path, device='cpu', compute_type='int8')
+                    else:
+                        model = WhisperModel(model_name, device='cpu', compute_type='int8', download_root=MODELS_DIR)
             else:
+                # If we were already on CPU or fallback failed
                 raise e
         
         send_progress(40, 'Transcription en cours...', 'transcribing')

@@ -4,6 +4,9 @@ import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
+
 interface AudioRecorderProps {
     onRecordingComplete: (audioBlob: Blob, filename: string) => void
     disabled?: boolean
@@ -38,10 +41,12 @@ export function AudioRecorder({ onRecordingComplete, disabled, translations }: A
         clickToStartRecording: 'Cliquez pour commencer l\'enregistrement',
         selectMicrophone: 'Sélectionner le microphone',
         listenRecording: 'Écouter l\'enregistrement',
+        includeSystemAudio: 'Inclure le son système',
     }
 
     const [isRecording, setIsRecording] = useState(false)
     const [isPaused, setIsPaused] = useState(false)
+    const [includeSystemAudio, setIncludeSystemAudio] = useState(false)
     const [recordingTime, setRecordingTime] = useState(0)
     const [audioLevel, setAudioLevel] = useState(0)
     const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([])
@@ -129,17 +134,51 @@ export function AudioRecorder({ onRecordingComplete, disabled, translations }: A
             const stream = await navigator.mediaDevices.getUserMedia(constraints)
             streamRef.current = stream
 
-            // Setup audio analyser for visualization
+            // Setup audio context for mixing and analysis
             const audioContext = new AudioContext()
             audioContextRef.current = audioContext
-            const source = audioContext.createMediaStreamSource(stream)
+            const dest = audioContext.createMediaStreamDestination()
+
+            // Connect microphone
+            const micSource = audioContext.createMediaStreamSource(stream)
+            micSource.connect(dest)
+
+            // Connect analyser to microphone source (for visualization)
             const analyser = audioContext.createAnalyser()
             analyser.fftSize = 256
-            source.connect(analyser)
+            micSource.connect(analyser)
             analyserRef.current = analyser
 
-            // Setup media recorder
-            const mediaRecorder = new MediaRecorder(stream, {
+            // Handle System Audio if requested
+            let systemStream: MediaStream | null = null
+            if (includeSystemAudio) {
+                try {
+                    // @ts-ignore - getDisplayMedia exists
+                    systemStream = await navigator.mediaDevices.getDisplayMedia({
+                        video: true, // Required to get audio on some platforms
+                        audio: true
+                    })
+
+                    if (systemStream) {
+                        // Check if we actually got an audio track
+                        const audioTrack = systemStream.getAudioTracks()[0]
+                        if (audioTrack) {
+                            const sysSource = audioContext.createMediaStreamSource(systemStream)
+                            sysSource.connect(dest)
+                        } else {
+                            console.warn("No system audio track obtained")
+                        }
+                        // Stop video track immediately as we don't need it
+                        systemStream.getVideoTracks().forEach(track => track.stop())
+                    }
+                } catch (err) {
+                    console.error("Could not get system audio:", err)
+                }
+            }
+
+            // Use the mixed stream for recording
+            const mixedStream = dest.stream
+            const mediaRecorder = new MediaRecorder(mixedStream, {
                 mimeType: 'audio/webm;codecs=opus'
             })
 
@@ -274,7 +313,7 @@ export function AudioRecorder({ onRecordingComplete, disabled, translations }: A
 
             {/* Microphone selection */}
             {!isRecording && audioDevices.length > 1 && (
-                <div className="mb-4">
+                <div className="mb-4 space-y-4">
                     <Select
                         value={selectedDevice}
                         onChange={(e) => setSelectedDevice(e.target.value)}
@@ -286,6 +325,15 @@ export function AudioRecorder({ onRecordingComplete, disabled, translations }: A
                             </option>
                         ))}
                     </Select>
+
+                    <div className="flex items-center justify-center space-x-2">
+                        <Switch
+                            id="system-audio"
+                            checked={includeSystemAudio}
+                            onCheckedChange={setIncludeSystemAudio}
+                        />
+                        <Label htmlFor="system-audio">{t.includeSystemAudio}</Label>
+                    </div>
                 </div>
             )}
 
