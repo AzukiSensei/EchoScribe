@@ -532,6 +532,12 @@ def transcribe_local(
             send_progress(32, 'GPU non disponible, bascule vers mode compatibilité (CPU)...', 'transcribing')
     except ImportError:
         pass
+    
+    # WORKAROUND: large-v3-turbo crashes with float16 on some systems (stack overflow)
+    # Force int8 quantization for this model to avoid CUDA buffer overflow
+    if model_name == 'large-v3-turbo' and device == 'cuda' and compute_type == 'float16':
+        compute_type = 'int8_float16'
+        print(f"[WORKAROUND] Using int8_float16 for large-v3-turbo to avoid CUDA crash", file=sys.stderr)
         
     try:
         # Determine model path
