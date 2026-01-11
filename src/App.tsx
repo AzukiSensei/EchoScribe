@@ -386,9 +386,14 @@ function App() {
             setDownloadedModels(prev => new Set([...prev, ...downloaded]))
         }
 
-        // Handle streamed segments
+        // Handle streamed segments - prevent duplicates
         const handleSegment = (_event: unknown, data: { segment: Segment }) => {
-            setSegments(prev => [...prev, data.segment])
+            setSegments(prev => {
+                // Check if this segment already exists (by start time to avoid duplicates)
+                const exists = prev.some(s => s.start === data.segment.start && s.end === data.segment.end)
+                if (exists) return prev
+                return [...prev, data.segment]
+            })
         }
 
         // Register listeners
