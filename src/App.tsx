@@ -1270,7 +1270,7 @@ function App() {
                                     </p>
                                     <div className="text-right text-xs">
                                         {progressInfo.speed !== undefined && progressInfo.speed > 0 && (
-                                            <div>Vitesse: {(progressInfo.speed * 60).toFixed(1)} min/s</div>
+                                            <div>Vitesse: {(progressInfo.speed * 60).toFixed(1)} s/min</div>
                                         )}
                                         {progressInfo.etr !== undefined && progressInfo.etr > 0 && (
                                             <div>Temps restant: {Math.floor(progressInfo.etr / 60)}:{String(Math.round(progressInfo.etr % 60)).padStart(2, '0')}</div>

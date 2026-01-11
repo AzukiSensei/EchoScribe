@@ -576,10 +576,12 @@ def transcribe_local(
     
     send_progress(40, 'Transcription en cours...', 'transcribing')
     
-    # Prepare transcription options
+    # Prepare transcription options with VAD filter to reduce memory usage
     transcribe_options = {
         'beam_size': 5,
         'word_timestamps': True,
+        'vad_filter': True,
+        'vad_parameters': dict(min_silence_duration_ms=500),
     }
     
     if language and language != 'auto':
@@ -837,6 +839,10 @@ def main():
         if text:
             send_progress(100, 'Transcription terminée!', 'transcribing')
             send_result(text, segments, detected_lang, metrics)
+        else:
+            # Segments were streamed - send completion with empty text
+            send_progress(100, 'Transcription terminée!', 'transcribing')
+            send_result("", [], detected_lang, metrics)
     
     finally:
         # Clean up temporary audio file
@@ -845,7 +851,17 @@ def main():
                 os.remove(temp_audio)
             except:
                 pass
+        
+        # Force cleanup of GPU memory
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except:
+            pass
 
 
 if __name__ == '__main__':
     main()
+    # Explicit exit to properly release VRAM and close process
+    sys.exit(0)
