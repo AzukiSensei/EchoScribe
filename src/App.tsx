@@ -17,8 +17,10 @@ import {
     Moon,
     FolderOpen,
     Trash2,
-    RefreshCw
+    RefreshCw,
+    Layers
 } from 'lucide-react'
+import SetupWizard from '@/components/SetupWizard'
 
 import { DropZone } from '@/components/DropZone'
 import { Button } from '@/components/ui/button'
@@ -151,21 +153,44 @@ function segmentsToVTT(segments: Segment[]): string {
  * Main application component for EchoScribe
  */
 function App() {
+    // Setup state - check if first launch
+    const [setupComplete, setSetupComplete] = useState(() => {
+        return localStorage.getItem('echoscribe_setup_complete') === 'true'
+    })
+
     // Theme state
-    const [isDarkMode, setIsDarkMode] = useState(true)
+    const [isDarkMode, setIsDarkMode] = useState(() => {
+        const saved = localStorage.getItem('echoscribe_theme')
+        return saved ? saved === 'dark' : true
+    })
 
     // File state
     const [selectedFile, setSelectedFile] = useState<File | null>(null)
 
+    // Batch mode
+    const [batchMode, setBatchMode] = useState(false)
+    const [batchFiles, setBatchFiles] = useState<string[]>([])
+    const [_currentBatchIndex, setCurrentBatchIndex] = useState(0)
+
     // Transcription mode
-    const [useCloudMode, setUseCloudMode] = useState(false)
-    const [apiKey, setApiKey] = useState('')
-    const [selectedModel, setSelectedModel] = useState('large-v3-turbo')
+    const [useCloudMode, setUseCloudMode] = useState(() => {
+        return localStorage.getItem('echoscribe_cloud_mode') === 'true'
+    })
+    const [apiKey, setApiKey] = useState(() => {
+        return localStorage.getItem('echoscribe_api_key') || ''
+    })
+    const [selectedModel, setSelectedModel] = useState(() => {
+        return localStorage.getItem('echoscribe_model') || 'large-v3-turbo'
+    })
     const [customModelPath, setCustomModelPath] = useState('')
 
     // Language and translation
-    const [sourceLanguage, setSourceLanguage] = useState('auto')
-    const [translateToEnglish, setTranslateToEnglish] = useState(false)
+    const [sourceLanguage, setSourceLanguage] = useState(() => {
+        return localStorage.getItem('echoscribe_language') || 'auto'
+    })
+    const [translateToEnglish, setTranslateToEnglish] = useState(() => {
+        return localStorage.getItem('echoscribe_translate') === 'true'
+    })
 
     // Progress state
     const [progressInfo, setProgressInfo] = useState<ProgressInfo>({
@@ -200,14 +225,8 @@ function App() {
         document.documentElement.classList.toggle('dark', isDarkMode)
     }, [isDarkMode])
 
-    // Load saved settings from localStorage
+    // Load saved history from localStorage
     useEffect(() => {
-        const savedApiKey = localStorage.getItem('echoscribe_api_key')
-        if (savedApiKey) setApiKey(savedApiKey)
-
-        const savedTheme = localStorage.getItem('echoscribe_theme')
-        if (savedTheme) setIsDarkMode(savedTheme === 'dark')
-
         const savedHistory = localStorage.getItem('echoscribe_history')
         if (savedHistory) {
             try {
@@ -218,17 +237,30 @@ function App() {
         }
     }, [])
 
-    // Save API key
+    // Save all settings to localStorage
     useEffect(() => {
-        if (apiKey) {
-            localStorage.setItem('echoscribe_api_key', apiKey)
-        }
+        localStorage.setItem('echoscribe_api_key', apiKey)
     }, [apiKey])
 
-    // Save theme
     useEffect(() => {
         localStorage.setItem('echoscribe_theme', isDarkMode ? 'dark' : 'light')
     }, [isDarkMode])
+
+    useEffect(() => {
+        localStorage.setItem('echoscribe_cloud_mode', useCloudMode ? 'true' : 'false')
+    }, [useCloudMode])
+
+    useEffect(() => {
+        localStorage.setItem('echoscribe_model', selectedModel)
+    }, [selectedModel])
+
+    useEffect(() => {
+        localStorage.setItem('echoscribe_language', sourceLanguage)
+    }, [sourceLanguage])
+
+    useEffect(() => {
+        localStorage.setItem('echoscribe_translate', translateToEnglish ? 'true' : 'false')
+    }, [translateToEnglish])
 
     // Save history
     useEffect(() => {
@@ -578,6 +610,34 @@ function App() {
 
     const isProcessing = progressInfo.status === 'extracting' || progressInfo.status === 'transcribing'
 
+    // Handle setup complete
+    const handleSetupComplete = useCallback(() => {
+        setSetupComplete(true)
+        localStorage.setItem('echoscribe_setup_complete', 'true')
+    }, [])
+
+    // Handle batch file selection
+    const handleBatchSelect = useCallback(async () => {
+        if (window.electronAPI && 'selectMultipleFiles' in window.electronAPI) {
+            const files = await (window.electronAPI as { selectMultipleFiles: () => Promise<string[]> }).selectMultipleFiles()
+            if (files && files.length > 0) {
+                setBatchFiles(files)
+                setBatchMode(true)
+                setCurrentBatchIndex(0)
+            }
+        }
+    }, [])
+
+    // Show setup wizard on first launch
+    if (!setupComplete) {
+        return (
+            <SetupWizard
+                onComplete={handleSetupComplete}
+                onSkip={handleSetupComplete}
+            />
+        )
+    }
+
     return (
         <div className={`min-h-screen bg-background transition-colors ${isDarkMode ? 'dark' : ''}`}>
             <div className="container mx-auto py-8 px-4 max-w-4xl">
@@ -593,6 +653,22 @@ function App() {
                             </h1>
                         </div>
                         <div className="flex items-center gap-2">
+                            {/* Batch Mode Toggle */}
+                            <Button
+                                variant={batchMode ? "default" : "ghost"}
+                                size="icon"
+                                onClick={() => {
+                                    if (batchMode) {
+                                        setBatchMode(false)
+                                        setBatchFiles([])
+                                    } else {
+                                        handleBatchSelect()
+                                    }
+                                }}
+                                title={batchMode ? `Batch: ${batchFiles.length} fichiers` : "Mode Batch"}
+                            >
+                                <Layers className="h-5 w-5" />
+                            </Button>
                             <Button
                                 variant="ghost"
                                 size="icon"

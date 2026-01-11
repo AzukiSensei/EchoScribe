@@ -45,9 +45,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openModelsFolder: () => ipcRenderer.invoke('models:openFolder'),
 
     /**
-     * Select multiple files for batch processing
-     */
+   * Select multiple files for batch processing
+   */
     selectMultipleFiles: () => ipcRenderer.invoke('file:selectMultiple'),
+
+    /**
+     * Check system dependencies
+     */
+    checkDependencies: () => ipcRenderer.invoke('system:checkDependencies'),
+
+    /**
+     * Install a dependency
+     */
+    installDependency: (dependency) => ipcRenderer.invoke('system:installDependency', dependency),
 
     /**
      * Progress updates

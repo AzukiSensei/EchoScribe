@@ -73,12 +73,17 @@ function createWindow() {
         minHeight: 600,
         title: 'EchoScribe',
         backgroundColor: '#0a0a0f',
+        autoHideMenuBar: true, // Hide menu bar by default
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
             preload: path.join(__dirname, 'preload.cjs')
         }
     })
+
+    // Remove the menu bar completely
+    mainWindow.setMenuBarVisibility(false)
+    mainWindow.setMenu(null)
 
     if (isDev) {
         mainWindow.loadURL('http://localhost:5173')
@@ -402,15 +407,113 @@ ipcMain.handle('models:download', (event, modelName) => {
  */
 ipcMain.handle('models:openFolder', async () => {
     const { shell } = require('electron')
-    const appData = process.env.APPDATA || process.env.HOME
-    const modelsPath = path.join(appData, '.cache', 'huggingface', 'hub')
+    // HuggingFace cache is in user home, not APPDATA
+    const homeDir = process.env.USERPROFILE || process.env.HOME
+    const modelsPath = path.join(homeDir, '.cache', 'huggingface', 'hub')
 
     // Try to open the cache folder, or create it if it doesn't exist
     if (fs.existsSync(modelsPath)) {
         await shell.openPath(modelsPath)
     } else {
-        // Open appdata as fallback
-        await shell.openPath(appData)
+        // Try alternate location
+        const altPath = path.join(homeDir, '.cache', 'huggingface')
+        if (fs.existsSync(altPath)) {
+            await shell.openPath(altPath)
+        } else {
+            // Create the folder
+            fs.mkdirSync(modelsPath, { recursive: true })
+            await shell.openPath(modelsPath)
+        }
+    }
+})
+
+/**
+ * Check system dependencies
+ */
+ipcMain.handle('system:checkDependencies', async () => {
+    const { exec } = require('child_process')
+    const util = require('util')
+    const execPromise = util.promisify(exec)
+
+    const deps = {
+        python: { installed: false, version: null },
+        pip: { installed: false, version: null },
+        ffmpeg: { installed: false, version: null },
+        fasterWhisper: { installed: false },
+        pytorch: { installed: false, cuda: false }
+    }
+
+    try {
+        // Check Python
+        const pythonResult = await execPromise('python --version').catch(() => null)
+        if (pythonResult) {
+            deps.python.installed = true
+            deps.python.version = pythonResult.stdout.trim() || pythonResult.stderr.trim()
+        }
+
+        // Check pip
+        const pipResult = await execPromise('pip --version').catch(() => null)
+        if (pipResult) {
+            deps.pip.installed = true
+            deps.pip.version = pipResult.stdout.trim().split(' ').slice(0, 2).join(' ')
+        }
+
+        // Check FFmpeg
+        const ffmpegResult = await execPromise('ffmpeg -version').catch(() => null)
+        if (ffmpegResult) {
+            deps.ffmpeg.installed = true
+            deps.ffmpeg.version = ffmpegResult.stdout.split('\n')[0]
+        }
+
+        // Check faster-whisper
+        const fwResult = await execPromise('pip show faster-whisper').catch(() => null)
+        if (fwResult && fwResult.stdout.includes('Name: faster-whisper')) {
+            deps.fasterWhisper.installed = true
+        }
+
+        // Check PyTorch with CUDA
+        const torchResult = await execPromise('python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"').catch(() => null)
+        if (torchResult) {
+            deps.pytorch.installed = true
+            const lines = torchResult.stdout.trim().split('\n')
+            deps.pytorch.cuda = lines[1] === 'True'
+        }
+    } catch (e) {
+        console.error('Error checking dependencies:', e)
+    }
+
+    return deps
+})
+
+/**
+ * Install dependencies
+ */
+ipcMain.handle('system:installDependency', async (event, dependency) => {
+    const { exec } = require('child_process')
+    const util = require('util')
+    const execPromise = util.promisify(exec)
+
+    const commands = {
+        python: 'winget install Python.Python.3.11 --accept-source-agreements --accept-package-agreements',
+        ffmpeg: 'winget install Gyan.FFmpeg --accept-source-agreements --accept-package-agreements',
+        fasterWhisper: 'pip install faster-whisper huggingface-hub openai',
+        pytorch: 'pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121',
+        pytorchCpu: 'pip install torch torchvision torchaudio'
+    }
+
+    const cmd = commands[dependency]
+    if (!cmd) {
+        return { success: false, error: 'Unknown dependency' }
+    }
+
+    try {
+        mainWindow.webContents.send('install:progress', { dependency, status: 'installing' })
+        await execPromise(cmd, { timeout: 600000 }) // 10 min timeout
+        mainWindow.webContents.send('install:progress', { dependency, status: 'complete' })
+        return { success: true }
+    } catch (e) {
+        mainWindow.webContents.send('install:progress', { dependency, status: 'error', error: e.message })
+        return { success: false, error: e.message }
     }
 })
 
