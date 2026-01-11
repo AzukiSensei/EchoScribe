@@ -35,9 +35,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listModels: () => ipcRenderer.invoke('models:list'),
 
     /**
-     * Download a model
-     */
+   * Download a model
+   */
     downloadModel: (modelName) => ipcRenderer.invoke('models:download', modelName),
+
+    /**
+     * Open the models folder in file explorer
+     */
+    openModelsFolder: () => ipcRenderer.invoke('models:openFolder'),
+
+    /**
+     * Select multiple files for batch processing
+     */
+    selectMultipleFiles: () => ipcRenderer.invoke('file:selectMultiple'),
 
     /**
      * Progress updates

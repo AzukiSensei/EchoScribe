@@ -396,3 +396,38 @@ ipcMain.handle('models:download', (event, modelName) => {
         console.error('Download stderr:', data.toString())
     })
 })
+
+/**
+ * Open the models folder in file explorer
+ */
+ipcMain.handle('models:openFolder', async () => {
+    const { shell } = require('electron')
+    const appData = process.env.APPDATA || process.env.HOME
+    const modelsPath = path.join(appData, '.cache', 'huggingface', 'hub')
+
+    // Try to open the cache folder, or create it if it doesn't exist
+    if (fs.existsSync(modelsPath)) {
+        await shell.openPath(modelsPath)
+    } else {
+        // Open appdata as fallback
+        await shell.openPath(appData)
+    }
+})
+
+/**
+ * Select multiple files for batch processing
+ */
+ipcMain.handle('file:selectMultiple', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openFile', 'multiSelections'],
+        filters: [
+            { name: 'Media Files', extensions: ['mp3', 'wav', 'm4a', 'flac', 'ogg', 'mp4', 'mkv', 'mov', 'avi', 'webm'] }
+        ]
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+        return []
+    }
+
+    return result.filePaths
+})

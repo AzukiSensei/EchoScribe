@@ -235,99 +235,82 @@ function App() {
         localStorage.setItem('echoscribe_history', JSON.stringify(history.slice(0, 50)))
     }, [history])
 
-    // Setup IPC listeners
+    // Setup IPC listeners - run only once on mount
     useEffect(() => {
-        if (window.electronAPI) {
-            window.electronAPI.onProgress((_event: unknown, data: { progress: number; message: string; stage: string }) => {
-                setProgressInfo({
-                    status: data.stage === 'extracting' ? 'extracting' : 'transcribing',
-                    progress: data.progress,
-                    message: data.message
-                })
+        if (!window.electronAPI) return
+
+        // Progress updates
+        const handleProgress = (_event: unknown, data: { progress: number; message: string; stage: string }) => {
+            setProgressInfo({
+                status: data.stage === 'extracting' ? 'extracting' : 'transcribing',
+                progress: data.progress,
+                message: data.message
             })
-
-            window.electronAPI.onComplete((_event: unknown, data: { text: string; segments?: Segment[]; detected_language?: string }) => {
-                setTranscriptionResult(data.text)
-                setSegments(data.segments || [])
-                setDetectedLanguage(data.detected_language || '')
-                setProgressInfo({
-                    status: 'complete',
-                    progress: 100,
-                    message: 'Transcription terminée !'
-                })
-
-                // Add to history
-                if (selectedFile) {
-                    const historyItem: HistoryItem = {
-                        id: Date.now().toString(),
-                        fileName: selectedFile.name,
-                        date: new Date().toISOString(),
-                        text: data.text,
-                        segments: data.segments || [],
-                        language: data.detected_language || sourceLanguage,
-                        mode: useCloudMode ? 'cloud' : 'local',
-                        model: selectedModel
-                    }
-                    setHistory(prev => [historyItem, ...prev])
-                }
-
-                toast({
-                    title: 'Succès',
-                    description: 'La transcription est terminée.',
-                    variant: 'success'
-                })
-            })
-
-            window.electronAPI.onError((_event: unknown, data: { error: string }) => {
-                setProgressInfo({
-                    status: 'error',
-                    progress: 0,
-                    message: data.error
-                })
-                toast({
-                    title: 'Erreur',
-                    description: data.error,
-                    variant: 'destructive'
-                })
-            })
-
-            // Model download progress
-            window.electronAPI.onDownloadProgress?.((_event: unknown, data: { model: string; progress: number; message: string }) => {
-                setDownloadProgress(data.progress)
-            })
-
-            window.electronAPI.onDownloadComplete?.((_event: unknown, data: { model: string; success: boolean }) => {
-                setDownloadingModel(null)
-                setDownloadProgress(0)
-                if (data.success) {
-                    toast({
-                        title: 'Téléchargement terminé',
-                        description: `Le modèle ${data.model} est prêt à l'emploi.`,
-                        variant: 'success'
-                    })
-                    // Add to downloaded models set
-                    setDownloadedModels(prev => new Set([...prev, data.model]))
-                    // Refresh models list
-                    refreshModels()
-                }
-            })
-
-            // Models list received
-            window.electronAPI.onModelsList?.((_event: unknown, data: { models: Record<string, unknown> }) => {
-                setAvailableModels(data.models as Record<string, ModelInfo>)
-            })
-
-            // Initial models list fetch
-            refreshModels()
         }
-    }, [toast, selectedFile, useCloudMode, selectedModel, sourceLanguage])
 
-    // Refresh available models
-    const refreshModels = useCallback(() => {
-        if (window.electronAPI?.listModels) {
+        // Transcription complete
+        const handleComplete = (_event: unknown, data: { text: string; segments?: Segment[]; detected_language?: string }) => {
+            setTranscriptionResult(data.text)
+            setSegments(data.segments || [])
+            setDetectedLanguage(data.detected_language || '')
+            setProgressInfo({
+                status: 'complete',
+                progress: 100,
+                message: 'Transcription terminée !'
+            })
+        }
+
+        // Error handling
+        const handleError = (_event: unknown, data: { error: string }) => {
+            setProgressInfo({
+                status: 'error',
+                progress: 0,
+                message: data.error
+            })
+        }
+
+        // Download progress
+        const handleDownloadProgress = (_event: unknown, data: { model: string; progress: number; message: string }) => {
+            setDownloadProgress(data.progress)
+        }
+
+        // Download complete
+        const handleDownloadComplete = (_event: unknown, data: { model: string; success: boolean }) => {
+            setDownloadingModel(null)
+            setDownloadProgress(0)
+            if (data.success) {
+                setDownloadedModels(prev => new Set([...prev, data.model]))
+            }
+        }
+
+        // Models list received
+        const handleModelsList = (_event: unknown, data: { models: Record<string, unknown> }) => {
+            setAvailableModels(data.models as Record<string, ModelInfo>)
+            // Update downloadedModels from the list
+            const downloaded = Object.entries(data.models)
+                .filter(([, m]) => (m as ModelInfo).downloaded)
+                .map(([name]) => name)
+            setDownloadedModels(prev => new Set([...prev, ...downloaded]))
+        }
+
+        // Register listeners
+        window.electronAPI.onProgress(handleProgress)
+        window.electronAPI.onComplete(handleComplete)
+        window.electronAPI.onError(handleError)
+        window.electronAPI.onDownloadProgress?.(handleDownloadProgress)
+        window.electronAPI.onDownloadComplete?.(handleDownloadComplete)
+        window.electronAPI.onModelsList?.(handleModelsList)
+
+        // Initial models list fetch
+        if (window.electronAPI.listModels) {
             window.electronAPI.listModels()
         }
-    }, [])
+
+        // Cleanup on unmount - Note: listeners are cleaned by Electron on window close
+        return () => {
+            // Listeners will be automatically cleaned when electron API is destroyed
+        }
+    }, []) // Empty deps - only run once
 
     // Start transcription
     const handleStartTranscription = useCallback(async () => {
@@ -801,9 +784,23 @@ function App() {
                                             </p>
                                         </div>
                                     )}
-                                    <p className="text-xs text-muted-foreground">
-                                        Les modèles plus grands offrent une meilleure précision mais nécessitent plus de VRAM
-                                    </p>
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-xs text-muted-foreground">
+                                            Les modèles plus grands offrent une meilleure précision mais nécessitent plus de VRAM
+                                        </p>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => {
+                                                if (window.electronAPI && 'openModelsFolder' in window.electronAPI) {
+                                                    (window.electronAPI as { openModelsFolder: () => Promise<void> }).openModelsFolder()
+                                                }
+                                            }}
+                                            title="Ouvrir le dossier des modèles"
+                                        >
+                                            <FolderOpen className="h-4 w-4" />
+                                        </Button>
+                                    </div>
                                 </div>
                             )}
 
