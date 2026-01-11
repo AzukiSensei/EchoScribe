@@ -6,6 +6,8 @@
  * - IPC communication with the renderer process
  * - Spawning Python process for transcription
  * - FFmpeg audio extraction management
+ * - Model download and management
+ * - File export functionality
  * 
  * For distribution:
  * - Python should be bundled using PyInstaller: pyinstaller --onefile transcriber.py
@@ -29,15 +31,11 @@ const isDev = !app.isPackaged
 
 /**
  * Get the path to the Python executable/script
- * In development: uses python from PATH
- * In production: uses bundled PyInstaller executable
  */
 function getPythonPath() {
     if (isDev) {
-        // Development mode: use system Python
         return 'python'
     } else {
-        // Production mode: use bundled executable
         const basePath = process.resourcesPath
         const exePath = path.join(basePath, 'python', 'transcriber.exe')
 
@@ -45,7 +43,6 @@ function getPythonPath() {
             return exePath
         }
 
-        // Fallback to system Python if bundled version not found
         console.warn('Bundled Python executable not found, falling back to system Python')
         return 'python'
     }
@@ -58,7 +55,7 @@ function getScriptPath() {
     if (isDev) {
         return path.join(__dirname, '..', 'python', 'transcriber.py')
     }
-    return null // Not needed in production with bundled executable
+    return null
 }
 
 /**
@@ -67,7 +64,7 @@ function getScriptPath() {
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1200,
-        height: 800,
+        height: 900,
         minWidth: 800,
         minHeight: 600,
         title: 'EchoScribe',
@@ -79,14 +76,10 @@ function createWindow() {
         }
     })
 
-    // Load the app
     if (isDev) {
-        // Development: load from Vite dev server
         mainWindow.loadURL('http://localhost:5173')
-        // Open DevTools in development
         mainWindow.webContents.openDevTools()
     } else {
-        // Production: load from built files
         mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
     }
 
@@ -99,7 +92,6 @@ function createWindow() {
 app.whenReady().then(createWindow)
 
 app.on('window-all-closed', () => {
-    // Kill any running Python process
     if (currentProcess) {
         currentProcess.kill()
         currentProcess = null
@@ -125,7 +117,7 @@ ipcMain.handle('file:select', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
         properties: ['openFile'],
         filters: [
-            { name: 'Media Files', extensions: ['mp3', 'wav', 'mp4', 'mkv', 'mov'] }
+            { name: 'Media Files', extensions: ['mp3', 'wav', 'm4a', 'flac', 'ogg', 'mp4', 'mkv', 'mov', 'avi', 'webm'] }
         ]
     })
 
@@ -137,13 +129,33 @@ ipcMain.handle('file:select', async () => {
 })
 
 /**
+ * Save file dialog
+ */
+ipcMain.handle('file:save', async (event, { content, filename, format }) => {
+    const filters = {
+        'txt': { name: 'Text Files', extensions: ['txt'] },
+        'srt': { name: 'SubRip Subtitle', extensions: ['srt'] },
+        'vtt': { name: 'WebVTT', extensions: ['vtt'] }
+    }
+
+    const result = await dialog.showSaveDialog(mainWindow, {
+        defaultPath: filename,
+        filters: [filters[format] || filters['txt']]
+    })
+
+    if (!result.canceled && result.filePath) {
+        fs.writeFileSync(result.filePath, content, 'utf-8')
+        return true
+    }
+    return false
+})
+
+/**
  * Start the transcription process
- * Spawns Python script with appropriate arguments
  */
 ipcMain.handle('transcribe:start', async (event, config) => {
-    const { filePath, mode, model, apiKey } = config
+    const { filePath, mode, model, apiKey, language, translate, customModelPath } = config
 
-    // Validate file exists
     if (!fs.existsSync(filePath)) {
         mainWindow.webContents.send('transcribe:error', {
             error: 'Le fichier sélectionné n\'existe pas.'
@@ -151,13 +163,11 @@ ipcMain.handle('transcribe:start', async (event, config) => {
         return
     }
 
-    // Build command arguments
     const pythonPath = getPythonPath()
     const scriptPath = getScriptPath()
 
     const args = []
 
-    // In development, we need to specify the script path
     if (scriptPath) {
         args.push(scriptPath)
     }
@@ -166,6 +176,18 @@ ipcMain.handle('transcribe:start', async (event, config) => {
     args.push('--mode', mode)
     args.push('--model', model)
 
+    if (language && language !== 'auto') {
+        args.push('--language', language)
+    }
+
+    if (translate) {
+        args.push('--translate')
+    }
+
+    if (customModelPath) {
+        args.push('--custom-model-path', customModelPath)
+    }
+
     if (mode === 'cloud' && apiKey) {
         args.push('--api-key', apiKey)
     }
@@ -173,12 +195,10 @@ ipcMain.handle('transcribe:start', async (event, config) => {
     console.log('Starting transcription:', pythonPath, args.join(' '))
 
     try {
-        // Spawn the Python process
         currentProcess = spawn(pythonPath, args, {
             cwd: isDev ? path.join(__dirname, '..', 'python') : undefined
         })
 
-        // Handle stdout - progress updates are sent as JSON lines
         currentProcess.stdout.on('data', (data) => {
             const lines = data.toString().split('\n').filter(line => line.trim())
 
@@ -194,7 +214,9 @@ ipcMain.handle('transcribe:start', async (event, config) => {
                         })
                     } else if (parsed.type === 'result') {
                         mainWindow.webContents.send('transcribe:complete', {
-                            text: parsed.text
+                            text: parsed.text,
+                            segments: parsed.segments || [],
+                            detected_language: parsed.detected_language
                         })
                         currentProcess = null
                     } else if (parsed.type === 'error') {
@@ -202,20 +224,32 @@ ipcMain.handle('transcribe:start', async (event, config) => {
                             error: parsed.message
                         })
                         currentProcess = null
+                    } else if (parsed.type === 'download_progress') {
+                        mainWindow.webContents.send('download:progress', {
+                            model: parsed.model,
+                            progress: parsed.progress,
+                            message: parsed.message
+                        })
+                    } else if (parsed.type === 'download_complete') {
+                        mainWindow.webContents.send('download:complete', {
+                            model: parsed.model,
+                            success: parsed.success
+                        })
+                    } else if (parsed.type === 'models_list') {
+                        mainWindow.webContents.send('models:list', {
+                            models: parsed.models
+                        })
                     }
                 } catch (e) {
-                    // Non-JSON output, might be debug info
                     console.log('Python output:', line)
                 }
             }
         })
 
-        // Handle stderr - errors and warnings
         currentProcess.stderr.on('data', (data) => {
             const message = data.toString()
             console.error('Python stderr:', message)
 
-            // Check for common errors
             if (message.includes('CUDA out of memory') || message.includes('OutOfMemoryError')) {
                 mainWindow.webContents.send('transcribe:error', {
                     error: 'Mémoire GPU insuffisante. Essayez un modèle plus petit.'
@@ -231,7 +265,6 @@ ipcMain.handle('transcribe:start', async (event, config) => {
             }
         })
 
-        // Handle process exit
         currentProcess.on('close', (code) => {
             console.log('Python process exited with code:', code)
             if (code !== 0 && currentProcess) {
@@ -242,7 +275,6 @@ ipcMain.handle('transcribe:start', async (event, config) => {
             currentProcess = null
         })
 
-        // Handle process errors
         currentProcess.on('error', (err) => {
             console.error('Failed to start Python process:', err)
 
@@ -275,4 +307,88 @@ ipcMain.handle('transcribe:cancel', () => {
         currentProcess = null
         console.log('Transcription cancelled')
     }
+})
+
+/**
+ * List available models
+ */
+ipcMain.handle('models:list', () => {
+    const pythonPath = getPythonPath()
+    const scriptPath = getScriptPath()
+
+    const args = []
+    if (scriptPath) {
+        args.push(scriptPath)
+    }
+    args.push('--list-models')
+
+    const process = spawn(pythonPath, args, {
+        cwd: isDev ? path.join(__dirname, '..', 'python') : undefined
+    })
+
+    process.stdout.on('data', (data) => {
+        try {
+            const parsed = JSON.parse(data.toString())
+            if (parsed.type === 'models_list') {
+                mainWindow.webContents.send('models:list', {
+                    models: parsed.models
+                })
+            }
+        } catch (e) {
+            console.log('Models list output:', data.toString())
+        }
+    })
+})
+
+/**
+ * Download a model
+ */
+ipcMain.handle('models:download', (event, modelName) => {
+    const pythonPath = getPythonPath()
+    const scriptPath = getScriptPath()
+
+    const args = []
+    if (scriptPath) {
+        args.push(scriptPath)
+    }
+    args.push('--download-model', modelName)
+
+    const process = spawn(pythonPath, args, {
+        cwd: isDev ? path.join(__dirname, '..', 'python') : undefined
+    })
+
+    process.stdout.on('data', (data) => {
+        const lines = data.toString().split('\n').filter(line => line.trim())
+
+        for (const line of lines) {
+            try {
+                const parsed = JSON.parse(line)
+
+                if (parsed.type === 'download_progress') {
+                    mainWindow.webContents.send('download:progress', {
+                        model: parsed.model,
+                        progress: parsed.progress,
+                        message: parsed.message
+                    })
+                } else if (parsed.type === 'download_complete') {
+                    mainWindow.webContents.send('download:complete', {
+                        model: parsed.model,
+                        success: parsed.success
+                    })
+                } else if (parsed.type === 'error') {
+                    mainWindow.webContents.send('download:complete', {
+                        model: modelName,
+                        success: false,
+                        error: parsed.message
+                    })
+                }
+            } catch (e) {
+                console.log('Download output:', line)
+            }
+        }
+    })
+
+    process.stderr.on('data', (data) => {
+        console.error('Download stderr:', data.toString())
+    })
 })

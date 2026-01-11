@@ -8,6 +8,9 @@ faster-whisper>=1.0.0
 # OpenAI API client for cloud mode
 openai>=1.0.0
 
+# Hugging Face Hub for model management
+huggingface-hub>=0.20.0
+
 # Optional: PyTorch with CUDA support for GPU acceleration
 # Install separately based on your CUDA version:
 # pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118

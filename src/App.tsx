@@ -8,7 +8,16 @@ import {
     Loader2,
     AlertCircle,
     Cpu,
-    Zap
+    Zap,
+    Download,
+    Languages,
+    FileText,
+    History,
+    Sun,
+    Moon,
+    FolderOpen,
+    Trash2,
+    RefreshCw
 } from 'lucide-react'
 
 import { DropZone } from '@/components/DropZone'
@@ -24,12 +33,37 @@ import { Toaster, useToast } from '@/components/ui/toaster'
 
 // Available Whisper models with their VRAM requirements
 const WHISPER_MODELS = [
-    { id: 'tiny', name: 'Tiny', vram: '~1 GB', speed: 'Très rapide' },
-    { id: 'base', name: 'Base', vram: '~1 GB', speed: 'Rapide' },
-    { id: 'small', name: 'Small', vram: '~2 GB', speed: 'Moyen' },
-    { id: 'medium', name: 'Medium', vram: '~5 GB', speed: 'Lent' },
-    { id: 'large-v3', name: 'Large V3', vram: '~6 GB', speed: 'Très lent' },
-    { id: 'large-v3-turbo', name: 'Large V3 Turbo', vram: '~6 GB', speed: 'Rapide (optimisé)' },
+    { id: 'tiny', name: 'Tiny', vram: '~1 GB', speed: 'Très rapide', size: '~75 MB' },
+    { id: 'base', name: 'Base', vram: '~1 GB', speed: 'Rapide', size: '~145 MB' },
+    { id: 'small', name: 'Small', vram: '~2 GB', speed: 'Moyen', size: '~488 MB' },
+    { id: 'medium', name: 'Medium', vram: '~5 GB', speed: 'Lent', size: '~1.5 GB' },
+    { id: 'large-v3', name: 'Large V3', vram: '~6 GB', speed: 'Très lent', size: '~3.1 GB' },
+    { id: 'large-v3-turbo', name: 'Large V3 Turbo', vram: '~6 GB', speed: 'Rapide (optimisé)', size: '~1.6 GB' },
+]
+
+// Supported languages
+const LANGUAGES = [
+    { code: 'auto', name: 'Auto-détection' },
+    { code: 'fr', name: 'Français' },
+    { code: 'en', name: 'English' },
+    { code: 'es', name: 'Español' },
+    { code: 'de', name: 'Deutsch' },
+    { code: 'it', name: 'Italiano' },
+    { code: 'pt', name: 'Português' },
+    { code: 'nl', name: 'Nederlands' },
+    { code: 'pl', name: 'Polski' },
+    { code: 'ru', name: 'Русский' },
+    { code: 'zh', name: '中文' },
+    { code: 'ja', name: '日本語' },
+    { code: 'ko', name: '한국어' },
+    { code: 'ar', name: 'العربية' },
+]
+
+// Export formats
+const EXPORT_FORMATS = [
+    { id: 'txt', name: 'Texte (.txt)', icon: FileText },
+    { id: 'srt', name: 'Sous-titres (.srt)', icon: FileText },
+    { id: 'vtt', name: 'WebVTT (.vtt)', icon: FileText },
 ]
 
 // Transcription status types
@@ -41,18 +75,97 @@ interface ProgressInfo {
     message: string
 }
 
+interface Segment {
+    start: number
+    end: number
+    text: string
+}
+
+interface HistoryItem {
+    id: string
+    fileName: string
+    date: string
+    text: string
+    segments: Segment[]
+    language: string
+    mode: 'local' | 'cloud'
+    model: string
+}
+
+interface ModelInfo {
+    name: string
+    size: string
+    vram: string
+    type: 'builtin' | 'custom'
+    downloaded: boolean
+    path?: string
+}
+
+/**
+ * Format timestamp for SRT format
+ */
+function formatTimestampSRT(seconds: number): string {
+    const hours = Math.floor(seconds / 3600)
+    const minutes = Math.floor((seconds % 3600) / 60)
+    const secs = Math.floor(seconds % 60)
+    const millis = Math.floor((seconds % 1) * 1000)
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${millis.toString().padStart(3, '0')}`
+}
+
+/**
+ * Format timestamp for VTT format
+ */
+function formatTimestampVTT(seconds: number): string {
+    const hours = Math.floor(seconds / 3600)
+    const minutes = Math.floor((seconds % 3600) / 60)
+    const secs = Math.floor(seconds % 60)
+    const millis = Math.floor((seconds % 1) * 1000)
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`
+}
+
+/**
+ * Convert segments to SRT format
+ */
+function segmentsToSRT(segments: Segment[]): string {
+    return segments.map((seg, i) => {
+        const start = formatTimestampSRT(seg.start)
+        const end = formatTimestampSRT(seg.end)
+        return `${i + 1}\n${start} --> ${end}\n${seg.text.trim()}\n`
+    }).join('\n')
+}
+
+/**
+ * Convert segments to VTT format
+ */
+function segmentsToVTT(segments: Segment[]): string {
+    const lines = ['WEBVTT\n']
+    segments.forEach(seg => {
+        const start = formatTimestampVTT(seg.start)
+        const end = formatTimestampVTT(seg.end)
+        lines.push(`${start} --> ${end}\n${seg.text.trim()}\n`)
+    })
+    return lines.join('\n')
+}
+
 /**
  * Main application component for EchoScribe
- * Handles file selection, transcription mode, and result display
  */
 function App() {
+    // Theme state
+    const [isDarkMode, setIsDarkMode] = useState(true)
+
     // File state
     const [selectedFile, setSelectedFile] = useState<File | null>(null)
 
-    // Transcription mode: false = local, true = cloud
+    // Transcription mode
     const [useCloudMode, setUseCloudMode] = useState(false)
     const [apiKey, setApiKey] = useState('')
     const [selectedModel, setSelectedModel] = useState('large-v3-turbo')
+    const [customModelPath, setCustomModelPath] = useState('')
+
+    // Language and translation
+    const [sourceLanguage, setSourceLanguage] = useState('auto')
+    const [translateToEnglish, setTranslateToEnglish] = useState(false)
 
     // Progress state
     const [progressInfo, setProgressInfo] = useState<ProgressInfo>({
@@ -63,30 +176,67 @@ function App() {
 
     // Result state
     const [transcriptionResult, setTranscriptionResult] = useState('')
+    const [segments, setSegments] = useState<Segment[]>([])
+    const [detectedLanguage, setDetectedLanguage] = useState('')
     const [copied, setCopied] = useState(false)
+
+    // Model management
+    const [availableModels, setAvailableModels] = useState<Record<string, ModelInfo>>({})
+    const [downloadingModel, setDownloadingModel] = useState<string | null>(null)
+    const [downloadProgress, setDownloadProgress] = useState(0)
+
+    // History
+    const [history, setHistory] = useState<HistoryItem[]>([])
+    const [showHistory, setShowHistory] = useState(false)
+
+    // Settings panel visibility
+    const [showAdvanced, setShowAdvanced] = useState(false)
 
     const { toast } = useToast()
 
-    // Load saved API key from localStorage
+    // Apply theme class to document
+    useEffect(() => {
+        document.documentElement.classList.toggle('dark', isDarkMode)
+    }, [isDarkMode])
+
+    // Load saved settings from localStorage
     useEffect(() => {
         const savedApiKey = localStorage.getItem('echoscribe_api_key')
-        if (savedApiKey) {
-            setApiKey(savedApiKey)
+        if (savedApiKey) setApiKey(savedApiKey)
+
+        const savedTheme = localStorage.getItem('echoscribe_theme')
+        if (savedTheme) setIsDarkMode(savedTheme === 'dark')
+
+        const savedHistory = localStorage.getItem('echoscribe_history')
+        if (savedHistory) {
+            try {
+                setHistory(JSON.parse(savedHistory))
+            } catch (e) {
+                console.error('Failed to parse history:', e)
+            }
         }
     }, [])
 
-    // Save API key to localStorage when it changes
+    // Save API key
     useEffect(() => {
         if (apiKey) {
             localStorage.setItem('echoscribe_api_key', apiKey)
         }
     }, [apiKey])
 
-    // Setup IPC listeners for progress updates from Electron main process
+    // Save theme
     useEffect(() => {
-        // Check if we're running in Electron
+        localStorage.setItem('echoscribe_theme', isDarkMode ? 'dark' : 'light')
+    }, [isDarkMode])
+
+    // Save history
+    useEffect(() => {
+        localStorage.setItem('echoscribe_history', JSON.stringify(history.slice(0, 50)))
+    }, [history])
+
+    // Setup IPC listeners
+    useEffect(() => {
         if (window.electronAPI) {
-            // Progress updates during transcription
             window.electronAPI.onProgress((_event: unknown, data: { progress: number; message: string; stage: string }) => {
                 setProgressInfo({
                     status: data.stage === 'extracting' ? 'extracting' : 'transcribing',
@@ -95,14 +245,31 @@ function App() {
                 })
             })
 
-            // Transcription completed
-            window.electronAPI.onComplete((_event: unknown, data: { text: string }) => {
+            window.electronAPI.onComplete((_event: unknown, data: { text: string; segments?: Segment[]; detected_language?: string }) => {
                 setTranscriptionResult(data.text)
+                setSegments(data.segments || [])
+                setDetectedLanguage(data.detected_language || '')
                 setProgressInfo({
                     status: 'complete',
                     progress: 100,
                     message: 'Transcription terminée !'
                 })
+
+                // Add to history
+                if (selectedFile) {
+                    const historyItem: HistoryItem = {
+                        id: Date.now().toString(),
+                        fileName: selectedFile.name,
+                        date: new Date().toISOString(),
+                        text: data.text,
+                        segments: data.segments || [],
+                        language: data.detected_language || sourceLanguage,
+                        mode: useCloudMode ? 'cloud' : 'local',
+                        model: selectedModel
+                    }
+                    setHistory(prev => [historyItem, ...prev])
+                }
+
                 toast({
                     title: 'Succès',
                     description: 'La transcription est terminée.',
@@ -110,7 +277,6 @@ function App() {
                 })
             })
 
-            // Error handling
             window.electronAPI.onError((_event: unknown, data: { error: string }) => {
                 setProgressInfo({
                     status: 'error',
@@ -123,14 +289,47 @@ function App() {
                     variant: 'destructive'
                 })
             })
+
+            // Model download progress
+            window.electronAPI.onDownloadProgress?.((_event: unknown, data: { model: string; progress: number; message: string }) => {
+                setDownloadProgress(data.progress)
+            })
+
+            window.electronAPI.onDownloadComplete?.((_event: unknown, data: { model: string; success: boolean }) => {
+                setDownloadingModel(null)
+                setDownloadProgress(0)
+                if (data.success) {
+                    toast({
+                        title: 'Téléchargement terminé',
+                        description: `Le modèle ${data.model} est prêt à l'emploi.`,
+                        variant: 'success'
+                    })
+                    // Refresh models list
+                    refreshModels()
+                }
+            })
+
+            // Models list received
+            window.electronAPI.onModelsList?.((_event: unknown, data: { models: Record<string, unknown> }) => {
+                setAvailableModels(data.models as Record<string, ModelInfo>)
+            })
+
+            // Initial models list fetch
+            refreshModels()
         }
-    }, [toast])
+    }, [toast, selectedFile, useCloudMode, selectedModel, sourceLanguage])
+
+    // Refresh available models
+    const refreshModels = useCallback(() => {
+        if (window.electronAPI?.listModels) {
+            window.electronAPI.listModels()
+        }
+    }, [])
 
     // Start transcription
     const handleStartTranscription = useCallback(async () => {
         if (!selectedFile) return
 
-        // Validate API key for cloud mode
         if (useCloudMode && !apiKey.trim()) {
             toast({
                 title: 'Clé API requise',
@@ -141,6 +340,8 @@ function App() {
         }
 
         setTranscriptionResult('')
+        setSegments([])
+        setDetectedLanguage('')
         setProgressInfo({
             status: 'extracting',
             progress: 0,
@@ -149,17 +350,17 @@ function App() {
 
         try {
             if (window.electronAPI) {
-                // Running in Electron - use IPC
-                // In Electron, File objects have a 'path' property
                 const filePath = (selectedFile as File & { path: string }).path
                 await window.electronAPI.startTranscription({
                     filePath,
                     mode: useCloudMode ? 'cloud' : 'local',
                     model: selectedModel,
-                    apiKey: useCloudMode ? apiKey : undefined
+                    apiKey: useCloudMode ? apiKey : undefined,
+                    language: sourceLanguage,
+                    translate: translateToEnglish,
+                    customModelPath: customModelPath || undefined
                 })
             } else {
-                // Development mode - simulate transcription
                 simulateTranscription()
             }
         } catch (error) {
@@ -170,9 +371,9 @@ function App() {
                 message: error instanceof Error ? error.message : 'Une erreur est survenue'
             })
         }
-    }, [selectedFile, useCloudMode, apiKey, selectedModel, toast])
+    }, [selectedFile, useCloudMode, apiKey, selectedModel, sourceLanguage, translateToEnglish, customModelPath, toast])
 
-    // Simulate transcription for development without Electron
+    // Simulate transcription for development
     const simulateTranscription = () => {
         let progress = 0
         const interval = setInterval(() => {
@@ -191,16 +392,34 @@ function App() {
                 })
             } else {
                 clearInterval(interval)
+                const mockSegments: Segment[] = [
+                    { start: 0, end: 5.5, text: "Bonjour et bienvenue dans EchoScribe." },
+                    { start: 5.5, end: 12.3, text: "Cette application vous permet de transcrire vos fichiers audio et vidéo." },
+                    { start: 12.3, end: 20.0, text: "Vous pouvez exporter les résultats en format texte, SRT ou VTT." }
+                ]
+                setSegments(mockSegments)
+                setDetectedLanguage('fr')
                 setProgressInfo({
                     status: 'complete',
                     progress: 100,
                     message: 'Transcription terminée !'
                 })
-                setTranscriptionResult(
-                    "Ceci est un exemple de transcription simulée pour le mode développement.\n\n" +
-                    "L'application EchoScribe utilise Whisper pour transcrire vos fichiers audio et vidéo avec une grande précision.\n\n" +
-                    "En mode production, le texte transcrit de votre fichier apparaîtra ici."
-                )
+                setTranscriptionResult(mockSegments.map(s => s.text).join(' '))
+
+                if (selectedFile) {
+                    const historyItem: HistoryItem = {
+                        id: Date.now().toString(),
+                        fileName: selectedFile.name,
+                        date: new Date().toISOString(),
+                        text: mockSegments.map(s => s.text).join(' '),
+                        segments: mockSegments,
+                        language: 'fr',
+                        mode: useCloudMode ? 'cloud' : 'local',
+                        model: selectedModel
+                    }
+                    setHistory(prev => [historyItem, ...prev])
+                }
+
                 toast({
                     title: 'Succès (Simulation)',
                     description: 'La transcription simulée est terminée.',
@@ -210,7 +429,7 @@ function App() {
         }, 200)
     }
 
-    // Cancel ongoing transcription
+    // Cancel transcription
     const handleCancel = useCallback(() => {
         if (window.electronAPI) {
             window.electronAPI.cancelTranscription()
@@ -222,7 +441,69 @@ function App() {
         })
     }, [])
 
-    // Copy result to clipboard
+    // Download model
+    const handleDownloadModel = useCallback((modelName: string) => {
+        if (window.electronAPI?.downloadModel) {
+            setDownloadingModel(modelName)
+            setDownloadProgress(0)
+            window.electronAPI.downloadModel(modelName)
+        } else {
+            toast({
+                title: 'Téléchargement simulé',
+                description: `En mode développement, le téléchargement de ${modelName} est simulé.`,
+            })
+        }
+    }, [toast])
+
+    // Export transcription
+    const handleExport = useCallback(async (format: 'txt' | 'srt' | 'vtt') => {
+        if (!transcriptionResult && segments.length === 0) return
+
+        let content: string
+        let filename: string
+        let mimeType: string
+
+        const baseName = selectedFile?.name.replace(/\.[^/.]+$/, '') || 'transcription'
+
+        switch (format) {
+            case 'srt':
+                content = segmentsToSRT(segments)
+                filename = `${baseName}.srt`
+                mimeType = 'text/plain'
+                break
+            case 'vtt':
+                content = segmentsToVTT(segments)
+                filename = `${baseName}.vtt`
+                mimeType = 'text/vtt'
+                break
+            default:
+                content = transcriptionResult
+                filename = `${baseName}.txt`
+                mimeType = 'text/plain'
+        }
+
+        if (window.electronAPI?.saveFile) {
+            await window.electronAPI.saveFile(content, filename, format)
+        } else {
+            // Browser fallback
+            const blob = new Blob([content], { type: mimeType })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = filename
+            document.body.appendChild(a)
+            a.click()
+            document.body.removeChild(a)
+            URL.revokeObjectURL(url)
+        }
+
+        toast({
+            title: 'Export réussi',
+            description: `Fichier ${filename} exporté.`,
+        })
+    }, [transcriptionResult, segments, selectedFile, toast])
+
+    // Copy to clipboard
     const handleCopy = useCallback(async () => {
         try {
             await navigator.clipboard.writeText(transcriptionResult)
@@ -232,7 +513,7 @@ function App() {
                 title: 'Copié !',
                 description: 'Le texte a été copié dans le presse-papier.',
             })
-        } catch (error) {
+        } catch {
             toast({
                 title: 'Erreur',
                 description: 'Impossible de copier le texte.',
@@ -241,10 +522,38 @@ function App() {
         }
     }, [transcriptionResult, toast])
 
-    // Clear file selection
+    // Load from history
+    const handleLoadFromHistory = useCallback((item: HistoryItem) => {
+        setTranscriptionResult(item.text)
+        setSegments(item.segments)
+        setDetectedLanguage(item.language)
+        setShowHistory(false)
+        toast({
+            title: 'Chargé',
+            description: `Transcription de "${item.fileName}" chargée.`,
+        })
+    }, [toast])
+
+    // Delete from history
+    const handleDeleteFromHistory = useCallback((id: string) => {
+        setHistory(prev => prev.filter(item => item.id !== id))
+    }, [])
+
+    // Clear history
+    const handleClearHistory = useCallback(() => {
+        setHistory([])
+        toast({
+            title: 'Historique effacé',
+            description: 'Toutes les transcriptions ont été supprimées.',
+        })
+    }, [toast])
+
+    // Clear file
     const handleClearFile = useCallback(() => {
         setSelectedFile(null)
         setTranscriptionResult('')
+        setSegments([])
+        setDetectedLanguage('')
         setProgressInfo({
             status: 'idle',
             progress: 0,
@@ -255,22 +564,108 @@ function App() {
     const isProcessing = progressInfo.status === 'extracting' || progressInfo.status === 'transcribing'
 
     return (
-        <div className="min-h-screen bg-background dark">
+        <div className={`min-h-screen bg-background transition-colors ${isDarkMode ? 'dark' : ''}`}>
             <div className="container mx-auto py-8 px-4 max-w-4xl">
                 {/* Header */}
                 <header className="text-center mb-8">
-                    <div className="flex items-center justify-center gap-3 mb-2">
-                        <div className="p-3 rounded-xl bg-primary/10">
-                            <Mic className="h-8 w-8 text-primary" />
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                            <div className="p-3 rounded-xl bg-primary/10">
+                                <Mic className="h-8 w-8 text-primary" />
+                            </div>
+                            <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+                                EchoScribe
+                            </h1>
                         </div>
-                        <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-                            EchoScribe
-                        </h1>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setShowHistory(!showHistory)}
+                                className="relative"
+                            >
+                                <History className="h-5 w-5" />
+                                {history.length > 0 && (
+                                    <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                                        {history.length > 9 ? '9+' : history.length}
+                                    </span>
+                                )}
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setIsDarkMode(!isDarkMode)}
+                            >
+                                {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+                            </Button>
+                        </div>
                     </div>
                     <p className="text-muted-foreground">
                         Transcription audio et vidéo avec Whisper
                     </p>
                 </header>
+
+                {/* History Panel */}
+                {showHistory && (
+                    <Card className="mb-6">
+                        <CardHeader>
+                            <div className="flex items-center justify-between">
+                                <CardTitle className="text-lg flex items-center gap-2">
+                                    <History className="h-5 w-5" />
+                                    Historique des transcriptions
+                                </CardTitle>
+                                {history.length > 0 && (
+                                    <Button variant="ghost" size="sm" onClick={handleClearHistory}>
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        Tout effacer
+                                    </Button>
+                                )}
+                            </div>
+                        </CardHeader>
+                        <CardContent>
+                            {history.length === 0 ? (
+                                <p className="text-muted-foreground text-center py-4">
+                                    Aucune transcription dans l'historique.
+                                </p>
+                            ) : (
+                                <div className="space-y-2 max-h-64 overflow-y-auto">
+                                    {history.map(item => (
+                                        <div
+                                            key={item.id}
+                                            className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                                        >
+                                            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => handleLoadFromHistory(item)}>
+                                                <p className="font-medium truncate">{item.fileName}</p>
+                                                <p className="text-sm text-muted-foreground">
+                                                    {new Date(item.date).toLocaleDateString('fr-FR', {
+                                                        day: 'numeric',
+                                                        month: 'short',
+                                                        year: 'numeric',
+                                                        hour: '2-digit',
+                                                        minute: '2-digit'
+                                                    })}
+                                                    {' • '}
+                                                    {item.mode === 'cloud' ? 'Cloud' : item.model}
+                                                    {item.language && ` • ${item.language.toUpperCase()}`}
+                                                </p>
+                                            </div>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    handleDeleteFromHistory(item.id)
+                                                }}
+                                            >
+                                                <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                                            </Button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                )}
 
                 <div className="space-y-6">
                     {/* Settings Card */}
@@ -281,6 +676,13 @@ function App() {
                                     <Settings className="h-5 w-5 text-muted-foreground" />
                                     <CardTitle className="text-lg">Configuration</CardTitle>
                                 </div>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setShowAdvanced(!showAdvanced)}
+                                >
+                                    {showAdvanced ? 'Moins d\'options' : 'Plus d\'options'}
+                                </Button>
                             </div>
                         </CardHeader>
                         <CardContent className="space-y-4">
@@ -317,18 +719,50 @@ function App() {
                                         <Zap className="h-4 w-4" />
                                         Modèle Whisper
                                     </Label>
-                                    <Select
-                                        id="model-select"
-                                        value={selectedModel}
-                                        onChange={(e) => setSelectedModel(e.target.value)}
-                                        disabled={isProcessing}
-                                    >
-                                        {WHISPER_MODELS.map((model) => (
-                                            <option key={model.id} value={model.id}>
-                                                {model.name} - {model.vram} - {model.speed}
-                                            </option>
-                                        ))}
-                                    </Select>
+                                    <div className="flex gap-2">
+                                        <Select
+                                            id="model-select"
+                                            value={selectedModel}
+                                            onChange={(e) => setSelectedModel(e.target.value)}
+                                            disabled={isProcessing}
+                                            className="flex-1"
+                                        >
+                                            {WHISPER_MODELS.map((model) => (
+                                                <option key={model.id} value={model.id}>
+                                                    {model.name} - {model.vram} - {model.speed}
+                                                </option>
+                                            ))}
+                                            {Object.values(availableModels)
+                                                .filter(m => m.type === 'custom')
+                                                .map(model => (
+                                                    <option key={model.name} value={model.path || model.name}>
+                                                        {model.name} (Custom)
+                                                    </option>
+                                                ))
+                                            }
+                                        </Select>
+                                        <Button
+                                            variant="outline"
+                                            size="icon"
+                                            onClick={() => handleDownloadModel(selectedModel)}
+                                            disabled={isProcessing || downloadingModel !== null}
+                                            title="Télécharger le modèle"
+                                        >
+                                            {downloadingModel === selectedModel ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                                <Download className="h-4 w-4" />
+                                            )}
+                                        </Button>
+                                    </div>
+                                    {downloadingModel && (
+                                        <div className="space-y-1">
+                                            <Progress value={downloadProgress} className="h-2" />
+                                            <p className="text-xs text-muted-foreground">
+                                                Téléchargement de {downloadingModel}... {downloadProgress}%
+                                            </p>
+                                        </div>
+                                    )}
                                     <p className="text-xs text-muted-foreground">
                                         Les modèles plus grands offrent une meilleure précision mais nécessitent plus de VRAM
                                     </p>
@@ -352,6 +786,64 @@ function App() {
                                     </p>
                                 </div>
                             )}
+
+                            {/* Language Selection */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="language-select" className="flex items-center gap-2">
+                                        <Languages className="h-4 w-4" />
+                                        Langue source
+                                    </Label>
+                                    <Select
+                                        id="language-select"
+                                        value={sourceLanguage}
+                                        onChange={(e) => setSourceLanguage(e.target.value)}
+                                        disabled={isProcessing}
+                                    >
+                                        {LANGUAGES.map((lang) => (
+                                            <option key={lang.code} value={lang.code}>
+                                                {lang.name}
+                                            </option>
+                                        ))}
+                                    </Select>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label className="flex items-center gap-2">
+                                        <RefreshCw className="h-4 w-4" />
+                                        Traduction
+                                    </Label>
+                                    <div className="flex items-center gap-2 h-10 px-3 rounded-md border bg-background">
+                                        <Switch
+                                            checked={translateToEnglish}
+                                            onCheckedChange={setTranslateToEnglish}
+                                            disabled={isProcessing}
+                                        />
+                                        <span className="text-sm">Traduire en anglais</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Advanced Options */}
+                            {showAdvanced && !useCloudMode && (
+                                <div className="space-y-2 p-4 rounded-lg border border-dashed">
+                                    <Label htmlFor="custom-model" className="flex items-center gap-2">
+                                        <FolderOpen className="h-4 w-4" />
+                                        Modèle personnalisé (optionnel)
+                                    </Label>
+                                    <Input
+                                        id="custom-model"
+                                        type="text"
+                                        placeholder="Chemin vers le dossier du modèle..."
+                                        value={customModelPath}
+                                        onChange={(e) => setCustomModelPath(e.target.value)}
+                                        disabled={isProcessing}
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        Chemin vers un modèle Whisper personnalisé (faster-whisper format)
+                                    </p>
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
 
@@ -360,7 +852,7 @@ function App() {
                         <CardHeader>
                             <CardTitle className="text-lg">Fichier à transcrire</CardTitle>
                             <CardDescription>
-                                Formats supportés : MP3, WAV, MP4, MKV, MOV
+                                Formats supportés : MP3, WAV, M4A, FLAC, OGG, MP4, MKV, MOV, AVI, WEBM
                             </CardDescription>
                         </CardHeader>
                         <CardContent>
@@ -371,7 +863,6 @@ function App() {
                                 disabled={isProcessing}
                             />
 
-                            {/* Action Buttons */}
                             {selectedFile && (
                                 <div className="mt-4 flex gap-3">
                                     <Button
@@ -414,6 +905,11 @@ function App() {
                                         <Loader2 className="h-5 w-5 animate-spin text-primary" />
                                     )}
                                     Progression
+                                    {detectedLanguage && progressInfo.status === 'complete' && (
+                                        <span className="text-sm font-normal text-muted-foreground ml-2">
+                                            (Langue détectée : {detectedLanguage.toUpperCase()})
+                                        </span>
+                                    )}
                                 </CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-3">
@@ -429,25 +925,40 @@ function App() {
                     {transcriptionResult && (
                         <Card>
                             <CardHeader>
-                                <div className="flex items-center justify-between">
+                                <div className="flex items-center justify-between flex-wrap gap-2">
                                     <CardTitle className="text-lg">Résultat</CardTitle>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={handleCopy}
-                                    >
-                                        {copied ? (
-                                            <>
-                                                <Check className="mr-2 h-4 w-4" />
-                                                Copié !
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Copy className="mr-2 h-4 w-4" />
-                                                Copier
-                                            </>
-                                        )}
-                                    </Button>
+                                    <div className="flex gap-2 flex-wrap">
+                                        {/* Export buttons */}
+                                        {EXPORT_FORMATS.map(format => (
+                                            <Button
+                                                key={format.id}
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => handleExport(format.id as 'txt' | 'srt' | 'vtt')}
+                                                disabled={format.id !== 'txt' && segments.length === 0}
+                                            >
+                                                <FileText className="mr-2 h-4 w-4" />
+                                                {format.id.toUpperCase()}
+                                            </Button>
+                                        ))}
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={handleCopy}
+                                        >
+                                            {copied ? (
+                                                <>
+                                                    <Check className="mr-2 h-4 w-4" />
+                                                    Copié !
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Copy className="mr-2 h-4 w-4" />
+                                                    Copier
+                                                </>
+                                            )}
+                                        </Button>
+                                    </div>
                                 </div>
                             </CardHeader>
                             <CardContent>
@@ -457,6 +968,11 @@ function App() {
                                     className="min-h-[200px] font-mono text-sm"
                                     placeholder="Le texte transcrit apparaîtra ici..."
                                 />
+                                {segments.length > 0 && (
+                                    <p className="text-xs text-muted-foreground mt-2">
+                                        {segments.length} segment(s) détecté(s) - Export SRT/VTT disponible
+                                    </p>
+                                )}
                             </CardContent>
                         </Card>
                     )}
@@ -464,7 +980,7 @@ function App() {
 
                 {/* Footer */}
                 <footer className="mt-8 text-center text-sm text-muted-foreground">
-                    <p>EchoScribe v1.0.0 • Powered by Whisper</p>
+                    <p>EchoScribe v1.1.0 • Powered by Whisper</p>
                 </footer>
             </div>
 
@@ -483,11 +999,20 @@ declare global {
                 mode: 'local' | 'cloud'
                 model: string
                 apiKey?: string
+                language?: string
+                translate?: boolean
+                customModelPath?: string
             }) => Promise<void>
             cancelTranscription: () => void
+            listModels: () => void
+            downloadModel: (modelName: string) => void
+            saveFile: (content: string, filename: string, format: string) => Promise<void>
             onProgress: (callback: (event: unknown, data: { progress: number; message: string; stage: string }) => void) => void
-            onComplete: (callback: (event: unknown, data: { text: string }) => void) => void
+            onComplete: (callback: (event: unknown, data: { text: string; segments?: Array<{ start: number; end: number; text: string }>; detected_language?: string }) => void) => void
             onError: (callback: (event: unknown, data: { error: string }) => void) => void
+            onDownloadProgress?: (callback: (event: unknown, data: { model: string; progress: number; message: string }) => void) => void
+            onDownloadComplete?: (callback: (event: unknown, data: { model: string; success: boolean }) => void) => void
+            onModelsList?: (callback: (event: unknown, data: { models: Record<string, unknown> }) => void) => void
         }
     }
 }

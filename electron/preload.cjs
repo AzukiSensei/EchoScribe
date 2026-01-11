@@ -3,11 +3,6 @@
  * 
  * This script runs in the renderer process before the web page loads.
  * It exposes a secure API to the renderer via contextBridge.
- * 
- * Security notes:
- * - contextIsolation is enabled
- * - nodeIntegration is disabled
- * - Only specific IPC channels are exposed
  */
 
 const { contextBridge, ipcRenderer } = require('electron')
@@ -16,17 +11,16 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('electronAPI', {
     /**
      * Open a file selection dialog
-     * @returns {Promise<string|null>} Selected file path or null if cancelled
      */
     selectFile: () => ipcRenderer.invoke('file:select'),
 
     /**
+     * Save content to a file
+     */
+    saveFile: (content, filename, format) => ipcRenderer.invoke('file:save', { content, filename, format }),
+
+    /**
      * Start the transcription process
-     * @param {Object} config - Transcription configuration
-     * @param {string} config.filePath - Path to the file to transcribe
-     * @param {string} config.mode - 'local' or 'cloud'
-     * @param {string} config.model - Whisper model name
-     * @param {string} [config.apiKey] - OpenAI API key (for cloud mode)
      */
     startTranscription: (config) => ipcRenderer.invoke('transcribe:start', config),
 
@@ -36,35 +30,66 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cancelTranscription: () => ipcRenderer.invoke('transcribe:cancel'),
 
     /**
-     * Register a callback for progress updates
-     * @param {Function} callback - Called with (event, data) where data contains progress info
+     * List available models
+     */
+    listModels: () => ipcRenderer.invoke('models:list'),
+
+    /**
+     * Download a model
+     */
+    downloadModel: (modelName) => ipcRenderer.invoke('models:download', modelName),
+
+    /**
+     * Progress updates
      */
     onProgress: (callback) => {
         ipcRenderer.on('transcribe:progress', callback)
     },
 
     /**
-     * Register a callback for transcription completion
-     * @param {Function} callback - Called with (event, data) where data contains the transcription text
+     * Transcription completion
      */
     onComplete: (callback) => {
         ipcRenderer.on('transcribe:complete', callback)
     },
 
     /**
-     * Register a callback for errors
-     * @param {Function} callback - Called with (event, data) where data contains error information
+     * Error handling
      */
     onError: (callback) => {
         ipcRenderer.on('transcribe:error', callback)
     },
 
     /**
-     * Remove all IPC listeners (cleanup)
+     * Model download progress
+     */
+    onDownloadProgress: (callback) => {
+        ipcRenderer.on('download:progress', callback)
+    },
+
+    /**
+     * Model download complete
+     */
+    onDownloadComplete: (callback) => {
+        ipcRenderer.on('download:complete', callback)
+    },
+
+    /**
+     * Models list received
+     */
+    onModelsList: (callback) => {
+        ipcRenderer.on('models:list', callback)
+    },
+
+    /**
+     * Remove all IPC listeners
      */
     removeAllListeners: () => {
         ipcRenderer.removeAllListeners('transcribe:progress')
         ipcRenderer.removeAllListeners('transcribe:complete')
         ipcRenderer.removeAllListeners('transcribe:error')
+        ipcRenderer.removeAllListeners('download:progress')
+        ipcRenderer.removeAllListeners('download:complete')
+        ipcRenderer.removeAllListeners('models:list')
     }
 })

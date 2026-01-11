@@ -3,8 +3,8 @@ import { Upload, FileAudio, FileVideo, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // Supported file formats for transcription
-const ACCEPTED_FORMATS = ['.mp3', '.wav', '.mp4', '.mkv', '.mov']
-const VIDEO_FORMATS = ['.mp4', '.mkv', '.mov']
+const ACCEPTED_FORMATS = ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.mp4', '.mkv', '.mov', '.avi', '.webm']
+const VIDEO_FORMATS = ['.mp4', '.mkv', '.mov', '.avi', '.webm']
 
 interface DropZoneProps {
     onFileSelect: (file: File) => void

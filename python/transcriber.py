@@ -7,13 +7,22 @@ This script handles audio/video transcription using:
 - faster-whisper for local transcription
 - OpenAI API for cloud transcription
 
+Features:
+- Multi-format export (TXT, SRT, VTT)
+- Translation to English
+- Language detection/selection
+- Model download management
+- Custom model support
+
 Communication with Electron:
 - Progress updates are sent as JSON objects to stdout
 - Errors are sent as JSON objects to stdout
 - The final result is sent as a JSON object to stdout
 
 Usage:
-    python transcriber.py --file <path> --mode <local|cloud> --model <model_name> [--api-key <key>]
+    python transcriber.py --file <path> --mode <local|cloud> --model <model_name> [options]
+    python transcriber.py --list-models
+    python transcriber.py --download-model <model_name>
 
 For distribution:
     Build with PyInstaller: pyinstaller --onefile transcriber.py
@@ -26,11 +35,42 @@ import sys
 import subprocess
 import tempfile
 from pathlib import Path
+from datetime import datetime
+from typing import Optional, List, Tuple
 
 # Supported file formats
-AUDIO_FORMATS = ['.mp3', '.wav']
-VIDEO_FORMATS = ['.mp4', '.mkv', '.mov']
+AUDIO_FORMATS = ['.mp3', '.wav', '.m4a', '.flac', '.ogg']
+VIDEO_FORMATS = ['.mp4', '.mkv', '.mov', '.avi', '.webm']
 ALL_FORMATS = AUDIO_FORMATS + VIDEO_FORMATS
+
+# Available Whisper models
+WHISPER_MODELS = {
+    'tiny': {'size': '~75 MB', 'vram': '~1 GB'},
+    'base': {'size': '~145 MB', 'vram': '~1 GB'},
+    'small': {'size': '~488 MB', 'vram': '~2 GB'},
+    'medium': {'size': '~1.5 GB', 'vram': '~5 GB'},
+    'large-v2': {'size': '~3.1 GB', 'vram': '~6 GB'},
+    'large-v3': {'size': '~3.1 GB', 'vram': '~6 GB'},
+    'large-v3-turbo': {'size': '~1.6 GB', 'vram': '~6 GB'},
+}
+
+# Supported languages (ISO 639-1 codes)
+SUPPORTED_LANGUAGES = {
+    'auto': 'Auto-détection',
+    'fr': 'Français',
+    'en': 'English',
+    'es': 'Español',
+    'de': 'Deutsch',
+    'it': 'Italiano',
+    'pt': 'Português',
+    'nl': 'Nederlands',
+    'pl': 'Polski',
+    'ru': 'Русский',
+    'zh': '中文',
+    'ja': '日本語',
+    'ko': '한국어',
+    'ar': 'العربية',
+}
 
 
 def send_progress(progress: int, message: str, stage: str = 'transcribing'):
@@ -44,11 +84,13 @@ def send_progress(progress: int, message: str, stage: str = 'transcribing'):
     print(output, flush=True)
 
 
-def send_result(text: str):
+def send_result(text: str, segments: List[dict] = None, detected_language: str = None):
     """Send transcription result to Electron via stdout"""
     output = json.dumps({
         'type': 'result',
-        'text': text
+        'text': text,
+        'segments': segments or [],
+        'detected_language': detected_language
     })
     print(output, flush=True)
 
@@ -63,20 +105,37 @@ def send_error(message: str):
     sys.exit(1)
 
 
+def send_models_list(models: dict):
+    """Send available models list to Electron"""
+    output = json.dumps({
+        'type': 'models_list',
+        'models': models
+    })
+    print(output, flush=True)
+
+
+def send_download_progress(model: str, progress: int, message: str):
+    """Send model download progress"""
+    output = json.dumps({
+        'type': 'download_progress',
+        'model': model,
+        'progress': progress,
+        'message': message
+    })
+    print(output, flush=True)
+
+
 def get_ffmpeg_path() -> str:
     """
     Get the path to FFmpeg executable.
     Checks for bundled FFmpeg first, then falls back to system PATH.
     """
-    # Check for bundled FFmpeg (for distribution)
     if getattr(sys, 'frozen', False):
-        # Running as compiled executable
         base_path = Path(sys._MEIPASS) if hasattr(sys, '_MEIPASS') else Path(sys.executable).parent
         ffmpeg_path = base_path / 'ffmpeg' / 'ffmpeg.exe'
         if ffmpeg_path.exists():
             return str(ffmpeg_path)
     
-    # Check common installation paths on Windows
     common_paths = [
         r'C:\ffmpeg\bin\ffmpeg.exe',
         r'C:\Program Files\ffmpeg\bin\ffmpeg.exe',
@@ -87,35 +146,116 @@ def get_ffmpeg_path() -> str:
         if os.path.exists(path):
             return path
     
-    # Fall back to system PATH
     return 'ffmpeg'
+
+
+def get_custom_models_dir() -> Path:
+    """Get the directory for custom models"""
+    app_data = Path(os.environ.get('APPDATA', Path.home()))
+    models_dir = app_data / 'EchoScribe' / 'models'
+    models_dir.mkdir(parents=True, exist_ok=True)
+    return models_dir
+
+
+def list_available_models() -> dict:
+    """List all available models including custom ones"""
+    models = {}
+    
+    # Built-in models
+    for name, info in WHISPER_MODELS.items():
+        models[name] = {
+            'name': name,
+            'size': info['size'],
+            'vram': info['vram'],
+            'type': 'builtin',
+            'downloaded': check_model_downloaded(name)
+        }
+    
+    # Custom models
+    custom_dir = get_custom_models_dir()
+    for model_path in custom_dir.glob('*'):
+        if model_path.is_dir():
+            model_name = model_path.name
+            if model_name not in models:
+                size = sum(f.stat().st_size for f in model_path.rglob('*') if f.is_file())
+                models[model_name] = {
+                    'name': model_name,
+                    'size': f'~{size / (1024*1024):.0f} MB',
+                    'vram': 'Unknown',
+                    'type': 'custom',
+                    'path': str(model_path),
+                    'downloaded': True
+                }
+    
+    return models
+
+
+def check_model_downloaded(model_name: str) -> bool:
+    """Check if a model is already downloaded in cache"""
+    try:
+        from huggingface_hub import try_to_load_from_cache
+        cache_path = try_to_load_from_cache(
+            repo_id=f"Systran/faster-whisper-{model_name}",
+            filename="model.bin"
+        )
+        return cache_path is not None
+    except:
+        return False
+
+
+def download_model(model_name: str):
+    """Download a Whisper model"""
+    send_download_progress(model_name, 0, f'Téléchargement du modèle {model_name}...')
+    
+    try:
+        from faster_whisper import WhisperModel
+        from huggingface_hub import snapshot_download
+        
+        # Download the model
+        repo_id = f"Systran/faster-whisper-{model_name}"
+        
+        send_download_progress(model_name, 10, 'Connexion à Hugging Face...')
+        
+        snapshot_download(
+            repo_id=repo_id,
+            local_files_only=False
+        )
+        
+        send_download_progress(model_name, 90, 'Vérification du modèle...')
+        
+        # Verify by loading
+        _ = WhisperModel(model_name, device='cpu', compute_type='int8')
+        
+        send_download_progress(model_name, 100, f'Modèle {model_name} téléchargé avec succès!')
+        
+        output = json.dumps({
+            'type': 'download_complete',
+            'model': model_name,
+            'success': True
+        })
+        print(output, flush=True)
+        
+    except Exception as e:
+        send_error(f'Erreur lors du téléchargement du modèle: {str(e)}')
 
 
 def extract_audio(video_path: str, output_path: str) -> bool:
     """
     Extract audio from video file using FFmpeg.
     Converts to 16kHz mono WAV format for Whisper.
-    
-    Args:
-        video_path: Path to the input video file
-        output_path: Path for the output WAV file
-        
-    Returns:
-        True if extraction succeeded, False otherwise
     """
     send_progress(5, 'Extraction audio en cours...', 'extracting')
     
     ffmpeg_path = get_ffmpeg_path()
     
-    # FFmpeg command to extract audio as 16kHz mono WAV
     cmd = [
         ffmpeg_path,
         '-i', video_path,
-        '-vn',                    # No video
-        '-acodec', 'pcm_s16le',   # PCM 16-bit little-endian
-        '-ar', '16000',           # 16kHz sample rate
-        '-ac', '1',               # Mono
-        '-y',                     # Overwrite output file
+        '-vn',
+        '-acodec', 'pcm_s16le',
+        '-ar', '16000',
+        '-ac', '1',
+        '-y',
         output_path
     ]
     
@@ -127,7 +267,6 @@ def extract_audio(video_path: str, output_path: str) -> bool:
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
         )
         
-        # Wait for the process to complete
         stdout, stderr = process.communicate()
         
         if process.returncode != 0:
@@ -149,28 +288,69 @@ def extract_audio(video_path: str, output_path: str) -> bool:
         return False
 
 
-def transcribe_local(audio_path: str, model_name: str) -> str:
+def format_timestamp(seconds: float, format_type: str = 'srt') -> str:
+    """Format timestamp for SRT or VTT format"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int((seconds % 1) * 1000)
+    
+    if format_type == 'vtt':
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
+    else:  # srt
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def segments_to_srt(segments: List[dict]) -> str:
+    """Convert segments to SRT format"""
+    lines = []
+    for i, seg in enumerate(segments, 1):
+        start = format_timestamp(seg['start'], 'srt')
+        end = format_timestamp(seg['end'], 'srt')
+        text = seg['text'].strip()
+        lines.append(f"{i}")
+        lines.append(f"{start} --> {end}")
+        lines.append(text)
+        lines.append("")
+    return '\n'.join(lines)
+
+
+def segments_to_vtt(segments: List[dict]) -> str:
+    """Convert segments to VTT format"""
+    lines = ["WEBVTT", ""]
+    for seg in segments:
+        start = format_timestamp(seg['start'], 'vtt')
+        end = format_timestamp(seg['end'], 'vtt')
+        text = seg['text'].strip()
+        lines.append(f"{start} --> {end}")
+        lines.append(text)
+        lines.append("")
+    return '\n'.join(lines)
+
+
+def transcribe_local(
+    audio_path: str,
+    model_name: str,
+    language: Optional[str] = None,
+    translate: bool = False,
+    custom_model_path: Optional[str] = None
+) -> Tuple[str, List[dict], str]:
     """
     Transcribe audio using faster-whisper (local mode).
     
-    Args:
-        audio_path: Path to the audio file
-        model_name: Name of the Whisper model to use
-        
     Returns:
-        Transcribed text
+        Tuple of (text, segments, detected_language)
     """
     try:
         from faster_whisper import WhisperModel
     except ImportError:
         send_error('faster-whisper n\'est pas installé. Exécutez: pip install faster-whisper')
-        return ''
+        return '', [], ''
     
     send_progress(30, f'Chargement du modèle {model_name}...', 'transcribing')
     
     try:
         # Determine device and compute type
-        # Try CUDA first, fall back to CPU
         device = 'cuda'
         compute_type = 'float16'
         
@@ -185,21 +365,44 @@ def transcribe_local(audio_path: str, model_name: str) -> str:
             compute_type = 'int8'
         
         # Load the model
-        model = WhisperModel(model_name, device=device, compute_type=compute_type)
+        if custom_model_path:
+            model = WhisperModel(custom_model_path, device=device, compute_type=compute_type)
+        else:
+            model = WhisperModel(model_name, device=device, compute_type=compute_type)
         
         send_progress(40, 'Transcription en cours...', 'transcribing')
         
-        # Transcribe
-        segments, info = model.transcribe(audio_path, beam_size=5)
+        # Prepare transcription options
+        transcribe_options = {
+            'beam_size': 5,
+            'word_timestamps': True,
+        }
         
-        # Collect segments with progress updates
-        text_parts = []
+        if language and language != 'auto':
+            transcribe_options['language'] = language
+        
+        if translate:
+            transcribe_options['task'] = 'translate'
+        
+        # Transcribe
+        segments_gen, info = model.transcribe(audio_path, **transcribe_options)
+        
+        detected_lang = info.language
         total_duration = info.duration if info.duration else 1
         
-        for segment in segments:
+        # Collect segments
+        segments = []
+        text_parts = []
+        
+        for segment in segments_gen:
+            seg_dict = {
+                'start': segment.start,
+                'end': segment.end,
+                'text': segment.text
+            }
+            segments.append(seg_dict)
             text_parts.append(segment.text)
             
-            # Calculate progress (40-95%)
             progress = 40 + int((segment.end / total_duration) * 55)
             progress = min(progress, 95)
             
@@ -209,7 +412,8 @@ def transcribe_local(audio_path: str, model_name: str) -> str:
                 'transcribing'
             )
         
-        return ' '.join(text_parts).strip()
+        full_text = ' '.join(text_parts).strip()
+        return full_text, segments, detected_lang
         
     except Exception as e:
         error_msg = str(e)
@@ -221,25 +425,26 @@ def transcribe_local(audio_path: str, model_name: str) -> str:
         else:
             send_error(f'Erreur lors de la transcription: {error_msg}')
         
-        return ''
+        return '', [], ''
 
 
-def transcribe_cloud(audio_path: str, api_key: str) -> str:
+def transcribe_cloud(
+    audio_path: str,
+    api_key: str,
+    language: Optional[str] = None,
+    translate: bool = False
+) -> Tuple[str, List[dict], str]:
     """
     Transcribe audio using OpenAI Whisper API (cloud mode).
     
-    Args:
-        audio_path: Path to the audio file
-        api_key: OpenAI API key
-        
     Returns:
-        Transcribed text
+        Tuple of (text, segments, detected_language)
     """
     try:
         from openai import OpenAI
     except ImportError:
         send_error('openai n\'est pas installé. Exécutez: pip install openai')
-        return ''
+        return '', [], ''
     
     send_progress(30, 'Connexion à l\'API OpenAI...', 'transcribing')
     
@@ -249,22 +454,43 @@ def transcribe_cloud(audio_path: str, api_key: str) -> str:
         send_progress(40, 'Envoi du fichier audio...', 'transcribing')
         
         with open(audio_path, 'rb') as audio_file:
-            # The API supports files up to 25 MB
             file_size = os.path.getsize(audio_path)
             if file_size > 25 * 1024 * 1024:
                 send_error('Le fichier est trop volumineux pour l\'API (max 25 MB). Utilisez le mode local.')
-                return ''
+                return '', [], ''
             
             send_progress(60, 'Transcription en cours sur le cloud...', 'transcribing')
             
-            transcript = client.audio.transcriptions.create(
-                model='whisper-1',
-                file=audio_file,
-                response_format='text'
-            )
+            # Prepare options
+            options = {
+                'model': 'whisper-1',
+                'file': audio_file,
+                'response_format': 'verbose_json',
+            }
+            
+            if language and language != 'auto':
+                options['language'] = language
+            
+            if translate:
+                # Use translation endpoint
+                transcript = client.audio.translations.create(**options)
+            else:
+                transcript = client.audio.transcriptions.create(**options)
+        
+        # Extract segments
+        segments = []
+        if hasattr(transcript, 'segments'):
+            for seg in transcript.segments:
+                segments.append({
+                    'start': seg.get('start', 0),
+                    'end': seg.get('end', 0),
+                    'text': seg.get('text', '')
+                })
+        
+        detected_lang = getattr(transcript, 'language', 'unknown')
         
         send_progress(95, 'Transcription terminée', 'transcribing')
-        return transcript
+        return transcript.text, segments, detected_lang
         
     except Exception as e:
         error_msg = str(e)
@@ -278,23 +504,51 @@ def transcribe_cloud(audio_path: str, api_key: str) -> str:
         else:
             send_error(f'Erreur API OpenAI: {error_msg}')
         
-        return ''
+        return '', [], ''
 
 
 def main():
     """Main entry point for the transcription script"""
     parser = argparse.ArgumentParser(description='EchoScribe Transcription Backend')
-    parser.add_argument('--file', required=True, help='Path to the audio/video file')
-    parser.add_argument('--mode', required=True, choices=['local', 'cloud'], 
+    parser.add_argument('--file', help='Path to the audio/video file')
+    parser.add_argument('--mode', choices=['local', 'cloud'], 
                         help='Transcription mode: local (faster-whisper) or cloud (OpenAI API)')
     parser.add_argument('--model', default='large-v3-turbo',
                         help='Whisper model name (for local mode)')
+    parser.add_argument('--custom-model-path', default=None,
+                        help='Path to custom model directory')
     parser.add_argument('--api-key', default=None,
                         help='OpenAI API key (required for cloud mode)')
-    parser.add_argument('--language', default=None,
-                        help='Language code (e.g., fr, en). Auto-detect if not specified.')
+    parser.add_argument('--language', default='auto',
+                        help='Source language code (e.g., fr, en). Use "auto" for auto-detection.')
+    parser.add_argument('--translate', action='store_true',
+                        help='Translate to English')
+    parser.add_argument('--list-models', action='store_true',
+                        help='List available models')
+    parser.add_argument('--download-model', metavar='MODEL',
+                        help='Download a specific model')
     
     args = parser.parse_args()
+    
+    # Handle model listing
+    if args.list_models:
+        models = list_available_models()
+        send_models_list(models)
+        return
+    
+    # Handle model download
+    if args.download_model:
+        download_model(args.download_model)
+        return
+    
+    # Validate required arguments for transcription
+    if not args.file:
+        send_error('Aucun fichier spécifié. Utilisez --file <path>')
+        return
+    
+    if not args.mode:
+        send_error('Aucun mode spécifié. Utilisez --mode local ou --mode cloud')
+        return
     
     # Validate file exists
     if not os.path.exists(args.file):
@@ -319,7 +573,6 @@ def main():
     temp_audio = None
     
     if file_ext in VIDEO_FORMATS:
-        # Create temporary file for extracted audio
         temp_dir = tempfile.gettempdir()
         temp_audio = os.path.join(temp_dir, 'echoscribe_temp_audio.wav')
         
@@ -330,14 +583,27 @@ def main():
     
     # Transcribe
     try:
-        if args.mode == 'local':
-            result = transcribe_local(audio_path, args.model)
-        else:
-            result = transcribe_cloud(audio_path, args.api_key)
+        language = args.language if args.language != 'auto' else None
         
-        if result:
+        if args.mode == 'local':
+            text, segments, detected_lang = transcribe_local(
+                audio_path,
+                args.model,
+                language=language,
+                translate=args.translate,
+                custom_model_path=args.custom_model_path
+            )
+        else:
+            text, segments, detected_lang = transcribe_cloud(
+                audio_path,
+                args.api_key,
+                language=language,
+                translate=args.translate
+            )
+        
+        if text:
             send_progress(100, 'Transcription terminée!', 'transcribing')
-            send_result(result)
+            send_result(text, segments, detected_lang)
     
     finally:
         # Clean up temporary audio file
