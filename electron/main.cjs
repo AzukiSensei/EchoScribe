@@ -472,7 +472,15 @@ ipcMain.handle('models:openFolder', async () => {
 ipcMain.handle('python:install-deps', async () => {
     return new Promise((resolve) => {
         const pythonPath = getPythonPath()
-        const requirementsPath = path.join(getScriptPath(), 'requirements.txt')
+        // Ensure we get the directory, not the file path
+        let pythonDir
+        if (isDev) {
+            pythonDir = path.join(__dirname, '..', 'python')
+        } else {
+            pythonDir = path.join(process.resourcesPath, 'python')
+        }
+
+        const requirementsPath = path.join(pythonDir, 'requirements.txt')
 
         console.log(`Installing dependencies from ${requirementsPath}...`)
 
