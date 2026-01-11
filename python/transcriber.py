@@ -207,11 +207,10 @@ def download_model(model_name: str):
     """Download a Whisper model using huggingface_hub"""
     send_download_progress(model_name, 0, f'Préparation du téléchargement de {model_name}...')
     
-    # Model name to repo mapping (some models have different repo names)
+    # Model name to repo mapping
+    # large-v3-turbo uses openai repo, others use Systran faster-whisper repos
     MODEL_REPO_MAPPING = {
-        'large-v3-turbo': 'turbo',
-        'large-v2': 'large-v2',
-        'large-v3': 'large-v3',
+        'large-v3-turbo': ('openai', 'whisper-large-v3-turbo'),  # openai/whisper-large-v3-turbo
     }
     
     try:
@@ -222,9 +221,13 @@ def download_model(model_name: str):
             send_error('huggingface_hub n\'est pas installé. Exécutez: pip install huggingface-hub')
             return
         
-        # Get the correct repo name
-        repo_model_name = MODEL_REPO_MAPPING.get(model_name, model_name)
-        repo_id = f"Systran/faster-whisper-{repo_model_name}"
+        # Get the correct repo
+        if model_name in MODEL_REPO_MAPPING:
+            org, repo_name = MODEL_REPO_MAPPING[model_name]
+            repo_id = f"{org}/{repo_name}"
+        else:
+            # Default to Systran faster-whisper repos
+            repo_id = f"Systran/faster-whisper-{model_name}"
         
         send_download_progress(model_name, 5, f'Connexion à Hugging Face ({repo_id})...')
         

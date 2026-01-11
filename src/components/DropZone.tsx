@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react'
-import { Upload, FileAudio, FileVideo, X } from 'lucide-react'
+import { Upload, FileAudio, FileVideo, X, Layers } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 
 // Supported file formats for transcription
 const ACCEPTED_FORMATS = ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.mp4', '.mkv', '.mov', '.avi', '.webm']
@@ -8,16 +9,27 @@ const VIDEO_FORMATS = ['.mp4', '.mkv', '.mov', '.avi', '.webm']
 
 interface DropZoneProps {
     onFileSelect: (file: File) => void
+    onBatchSelect?: (files: File[]) => void
     selectedFile: File | null
+    batchFiles?: File[]
     onClear: () => void
     disabled?: boolean
+    batchMode?: boolean
 }
 
 /**
  * Drag & Drop zone for media files
- * Supports audio (.mp3, .wav) and video (.mp4, .mkv, .mov) formats
+ * Supports single file and batch mode with multiple files
  */
-export function DropZone({ onFileSelect, selectedFile, onClear, disabled }: DropZoneProps) {
+export function DropZone({
+    onFileSelect,
+    onBatchSelect,
+    selectedFile,
+    batchFiles = [],
+    onClear,
+    disabled,
+    batchMode = false
+}: DropZoneProps) {
     const [isDragging, setIsDragging] = useState(false)
 
     const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -38,20 +50,27 @@ export function DropZone({ onFileSelect, selectedFile, onClear, disabled }: Drop
 
         if (disabled) return
 
-        const file = e.dataTransfer.files[0]
-        if (file && isValidFile(file)) {
-            onFileSelect(file)
+        const files = Array.from(e.dataTransfer.files).filter(isValidFile)
+
+        if (files.length > 1 && onBatchSelect) {
+            // Multiple files dropped - switch to batch mode
+            onBatchSelect(files)
+        } else if (files.length === 1) {
+            onFileSelect(files[0])
         }
-    }, [onFileSelect, disabled])
+    }, [onFileSelect, onBatchSelect, disabled])
 
     const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (file && isValidFile(file)) {
-            onFileSelect(file)
+        const files = e.target.files ? Array.from(e.target.files).filter(isValidFile) : []
+
+        if (files.length > 1 && onBatchSelect) {
+            onBatchSelect(files)
+        } else if (files.length === 1) {
+            onFileSelect(files[0])
         }
         // Reset input value to allow selecting the same file again
         e.target.value = ''
-    }, [onFileSelect])
+    }, [onFileSelect, onBatchSelect])
 
     const isValidFile = (file: File): boolean => {
         const extension = '.' + file.name.split('.').pop()?.toLowerCase()
@@ -67,6 +86,48 @@ export function DropZone({ onFileSelect, selectedFile, onClear, disabled }: Drop
         if (bytes < 1024) return bytes + ' B'
         if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+    }
+
+    // Render batch files list
+    if (batchMode && batchFiles.length > 0) {
+        return (
+            <div className="border-2 border-dashed rounded-xl p-4 border-primary/50 bg-primary/5">
+                <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                        <Layers className="h-5 w-5 text-primary" />
+                        <span className="font-medium">Mode Batch - {batchFiles.length} fichiers</span>
+                    </div>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={onClear}
+                        disabled={disabled}
+                    >
+                        <X className="h-4 w-4 mr-1" />
+                        Effacer tout
+                    </Button>
+                </div>
+                <div className="max-h-48 overflow-y-auto space-y-2">
+                    {batchFiles.map((file, index) => (
+                        <div
+                            key={`${file.name}-${index}`}
+                            className="flex items-center gap-2 p-2 rounded bg-muted/50"
+                        >
+                            {isVideoFile(file) ? (
+                                <FileVideo className="h-4 w-4 text-primary flex-shrink-0" />
+                            ) : (
+                                <FileAudio className="h-4 w-4 text-primary flex-shrink-0" />
+                            )}
+                            <span className="text-sm truncate flex-1">{file.name}</span>
+                            <span className="text-xs text-muted-foreground">{formatFileSize(file.size)}</span>
+                        </div>
+                    ))}
+                </div>
+                <p className="text-xs text-muted-foreground mt-3 text-center">
+                    Glissez plus de fichiers pour les ajouter
+                </p>
+            </div>
+        )
     }
 
     return (
@@ -90,6 +151,7 @@ export function DropZone({ onFileSelect, selectedFile, onClear, disabled }: Drop
                 accept={ACCEPTED_FORMATS.join(',')}
                 onChange={handleFileInput}
                 disabled={disabled}
+                multiple // Enable multiple file selection
             />
 
             {selectedFile ? (
@@ -136,10 +198,10 @@ export function DropZone({ onFileSelect, selectedFile, onClear, disabled }: Drop
                     </div>
                     <div>
                         <p className="font-medium text-foreground">
-                            Glissez-déposez votre fichier ici
+                            Glissez-déposez vos fichiers ici
                         </p>
                         <p className="text-sm text-muted-foreground mt-1">
-                            ou cliquez pour sélectionner
+                            ou cliquez pour sélectionner • <span className="text-primary">Mode batch avec plusieurs fichiers</span>
                         </p>
                     </div>
                     <div className="flex flex-wrap justify-center gap-2 text-xs text-muted-foreground">

@@ -21,6 +21,7 @@ import {
     Layers
 } from 'lucide-react'
 import SetupWizard from '@/components/SetupWizard'
+import { AudioRecorder } from '@/components/AudioRecorder'
 
 import { DropZone } from '@/components/DropZone'
 import { Button } from '@/components/ui/button'
@@ -167,9 +168,12 @@ function App() {
     // File state
     const [selectedFile, setSelectedFile] = useState<File | null>(null)
 
+    // Input mode: 'file' or 'record'
+    const [inputMode, setInputMode] = useState<'file' | 'record'>('file')
+
     // Batch mode
     const [batchMode, setBatchMode] = useState(false)
-    const [batchFiles, setBatchFiles] = useState<string[]>([])
+    const [batchFiles, setBatchFiles] = useState<File[]>([])
     const [_currentBatchIndex, setCurrentBatchIndex] = useState(0)
 
     // Transcription mode
@@ -616,16 +620,19 @@ function App() {
         localStorage.setItem('echoscribe_setup_complete', 'true')
     }, [])
 
-    // Handle batch file selection
-    const handleBatchSelect = useCallback(async () => {
-        if (window.electronAPI && 'selectMultipleFiles' in window.electronAPI) {
-            const files = await (window.electronAPI as { selectMultipleFiles: () => Promise<string[]> }).selectMultipleFiles()
-            if (files && files.length > 0) {
-                setBatchFiles(files)
-                setBatchMode(true)
-                setCurrentBatchIndex(0)
-            }
-        }
+    // Handle batch file selection from DropZone
+    const handleBatchFilesSelect = useCallback((files: File[]) => {
+        setBatchFiles(files)
+        setBatchMode(true)
+        setCurrentBatchIndex(0)
+    }, [])
+
+    // Handle recording complete
+    const handleRecordingComplete = useCallback((audioBlob: Blob, filename: string) => {
+        // Create a File from the Blob
+        const file = new File([audioBlob], filename, { type: 'audio/webm' })
+        setSelectedFile(file)
+        setInputMode('file') // Switch back to file mode to show the file
     }, [])
 
     // Show setup wizard on first launch
@@ -653,21 +660,14 @@ function App() {
                             </h1>
                         </div>
                         <div className="flex items-center gap-2">
-                            {/* Batch Mode Toggle */}
+                            {/* Recording Mode Toggle */}
                             <Button
-                                variant={batchMode ? "default" : "ghost"}
+                                variant={inputMode === 'record' ? "default" : "ghost"}
                                 size="icon"
-                                onClick={() => {
-                                    if (batchMode) {
-                                        setBatchMode(false)
-                                        setBatchFiles([])
-                                    } else {
-                                        handleBatchSelect()
-                                    }
-                                }}
-                                title={batchMode ? `Batch: ${batchFiles.length} fichiers` : "Mode Batch"}
+                                onClick={() => setInputMode(inputMode === 'record' ? 'file' : 'record')}
+                                title={inputMode === 'record' ? "Mode Enregistrement" : "Enregistrer de l'audio"}
                             >
-                                <Layers className="h-5 w-5" />
+                                <Mic className="h-5 w-5" />
                             </Button>
                             <Button
                                 variant="ghost"
@@ -697,66 +697,68 @@ function App() {
                 </header>
 
                 {/* History Panel */}
-                {showHistory && (
-                    <Card className="mb-6">
-                        <CardHeader>
-                            <div className="flex items-center justify-between">
-                                <CardTitle className="text-lg flex items-center gap-2">
-                                    <History className="h-5 w-5" />
-                                    Historique des transcriptions
-                                </CardTitle>
-                                {history.length > 0 && (
-                                    <Button variant="ghost" size="sm" onClick={handleClearHistory}>
-                                        <Trash2 className="h-4 w-4 mr-2" />
-                                        Tout effacer
-                                    </Button>
-                                )}
-                            </div>
-                        </CardHeader>
-                        <CardContent>
-                            {history.length === 0 ? (
-                                <p className="text-muted-foreground text-center py-4">
-                                    Aucune transcription dans l'historique.
-                                </p>
-                            ) : (
-                                <div className="space-y-2 max-h-64 overflow-y-auto">
-                                    {history.map(item => (
-                                        <div
-                                            key={item.id}
-                                            className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                                        >
-                                            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => handleLoadFromHistory(item)}>
-                                                <p className="font-medium truncate">{item.fileName}</p>
-                                                <p className="text-sm text-muted-foreground">
-                                                    {new Date(item.date).toLocaleDateString('fr-FR', {
-                                                        day: 'numeric',
-                                                        month: 'short',
-                                                        year: 'numeric',
-                                                        hour: '2-digit',
-                                                        minute: '2-digit'
-                                                    })}
-                                                    {' • '}
-                                                    {item.mode === 'cloud' ? 'Cloud' : item.model}
-                                                    {item.language && ` • ${item.language.toUpperCase()}`}
-                                                </p>
-                                            </div>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    handleDeleteFromHistory(item.id)
-                                                }}
-                                            >
-                                                <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                                            </Button>
-                                        </div>
-                                    ))}
+                {
+                    showHistory && (
+                        <Card className="mb-6">
+                            <CardHeader>
+                                <div className="flex items-center justify-between">
+                                    <CardTitle className="text-lg flex items-center gap-2">
+                                        <History className="h-5 w-5" />
+                                        Historique des transcriptions
+                                    </CardTitle>
+                                    {history.length > 0 && (
+                                        <Button variant="ghost" size="sm" onClick={handleClearHistory}>
+                                            <Trash2 className="h-4 w-4 mr-2" />
+                                            Tout effacer
+                                        </Button>
+                                    )}
                                 </div>
-                            )}
-                        </CardContent>
-                    </Card>
-                )}
+                            </CardHeader>
+                            <CardContent>
+                                {history.length === 0 ? (
+                                    <p className="text-muted-foreground text-center py-4">
+                                        Aucune transcription dans l'historique.
+                                    </p>
+                                ) : (
+                                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                                        {history.map(item => (
+                                            <div
+                                                key={item.id}
+                                                className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                                            >
+                                                <div className="flex-1 min-w-0 cursor-pointer" onClick={() => handleLoadFromHistory(item)}>
+                                                    <p className="font-medium truncate">{item.fileName}</p>
+                                                    <p className="text-sm text-muted-foreground">
+                                                        {new Date(item.date).toLocaleDateString('fr-FR', {
+                                                            day: 'numeric',
+                                                            month: 'short',
+                                                            year: 'numeric',
+                                                            hour: '2-digit',
+                                                            minute: '2-digit'
+                                                        })}
+                                                        {' • '}
+                                                        {item.mode === 'cloud' ? 'Cloud' : item.model}
+                                                        {item.language && ` • ${item.language.toUpperCase()}`}
+                                                    </p>
+                                                </div>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        handleDeleteFromHistory(item.id)
+                                                    }}
+                                                >
+                                                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    )
+                }
 
                 <div className="space-y-6">
                     {/* Settings Card */}
@@ -958,21 +960,45 @@ function App() {
                         </CardContent>
                     </Card>
 
-                    {/* Drop Zone Card */}
+                    {/* Drop Zone / Recording Card */}
                     <Card>
                         <CardHeader>
-                            <CardTitle className="text-lg">Fichier à transcrire</CardTitle>
-                            <CardDescription>
-                                Formats supportés : MP3, WAV, M4A, FLAC, OGG, MP4, MKV, MOV, AVI, WEBM
-                            </CardDescription>
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <CardTitle className="text-lg">
+                                        {inputMode === 'record' ? 'Enregistrement audio' : 'Fichier à transcrire'}
+                                    </CardTitle>
+                                    <CardDescription>
+                                        {inputMode === 'record'
+                                            ? 'Enregistrez de l\'audio directement depuis votre microphone'
+                                            : 'Glissez plusieurs fichiers pour activer le mode batch'}
+                                    </CardDescription>
+                                </div>
+                                {batchMode && (
+                                    <div className="flex items-center gap-2 px-3 py-1 bg-primary/10 rounded-full">
+                                        <Layers className="h-4 w-4 text-primary" />
+                                        <span className="text-sm font-medium">{batchFiles.length} fichiers</span>
+                                    </div>
+                                )}
+                            </div>
                         </CardHeader>
                         <CardContent>
-                            <DropZone
-                                onFileSelect={setSelectedFile}
-                                selectedFile={selectedFile}
-                                onClear={handleClearFile}
-                                disabled={isProcessing}
-                            />
+                            {inputMode === 'record' ? (
+                                <AudioRecorder
+                                    onRecordingComplete={handleRecordingComplete}
+                                    disabled={isProcessing}
+                                />
+                            ) : (
+                                <DropZone
+                                    onFileSelect={setSelectedFile}
+                                    onBatchSelect={handleBatchFilesSelect}
+                                    selectedFile={selectedFile}
+                                    batchFiles={batchFiles}
+                                    onClear={handleClearFile}
+                                    disabled={isProcessing}
+                                    batchMode={batchMode}
+                                />
+                            )}
 
                             {selectedFile && (
                                 <div className="mt-4 flex gap-3">
@@ -1093,10 +1119,10 @@ function App() {
                 <footer className="mt-8 text-center text-sm text-muted-foreground">
                     <p>EchoScribe v1.1.0 • Powered by Whisper</p>
                 </footer>
-            </div>
+            </div >
 
             <Toaster />
-        </div>
+        </div >
     )
 }
 
