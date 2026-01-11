@@ -337,8 +337,12 @@ function App() {
 
         // Transcription complete
         const handleComplete = (_event: unknown, data: { text: string; segments?: Segment[]; detected_language?: string }) => {
-            setTranscriptionResult(data.text)
-            setSegments(data.segments || [])
+            // Reconstruct full text from streamed segments (Python sends empty text for large files)
+            setTranscriptionResult(prev => {
+                // Use accumulated segments to rebuild text
+                const fullText = segments.map(s => s.text).join(' ').trim()
+                return fullText || data.text || prev
+            })
             setDetectedLanguage(data.detected_language || '')
             setProgressInfo({
                 status: 'complete',
@@ -851,9 +855,6 @@ function App() {
                             </Button>
                         </div>
                     </div>
-                    <p className="text-xl text-muted-foreground">
-                        {t.appDescription}
-                    </p>
                 </header>
 
                 {

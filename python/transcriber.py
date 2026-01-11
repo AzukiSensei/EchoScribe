@@ -642,7 +642,8 @@ def transcribe_local(
             etr=round(etr, 0)
         )
     
-    full_text = ' '.join(text_parts).strip()
+    # Don't accumulate full_text - frontend has all segments already
+    # For 1h+ files, joining all text causes stack overflow on Windows
     
     # Final metrics
     total_elapsed = time.time() - transcription_start
@@ -654,7 +655,8 @@ def transcribe_local(
         'speed_factor': round(avg_speed, 2)
     }
     
-    return full_text, [], detected_lang, metrics  # Empty segments list - already streamed
+    # Send empty text - frontend reconstructs from streamed segments
+    return "", [], detected_lang, metrics
 
 
 def transcribe_cloud(
