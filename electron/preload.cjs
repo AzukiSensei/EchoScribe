@@ -77,6 +77,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
 
     /**
+     * Segment streaming
+     */
+    onSegment: (callback) => {
+        ipcRenderer.on('transcribe:segment', callback)
+    },
+
+    /**
      * Transcription completion
      */
     onComplete: (callback) => {

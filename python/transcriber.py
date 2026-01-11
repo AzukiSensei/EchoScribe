@@ -122,7 +122,17 @@ SUPPORTED_LANGUAGES = {
 }
 
 
-def send_progress(progress: int, message: str, stage: str = 'transcribing'):
+
+def send_segment(segment: dict):
+    """Send a single segment to Electron via stdout"""
+    output = json.dumps({
+        'type': 'segment',
+        'segment': segment
+    })
+    print(output, flush=True)
+
+
+def send_progress(progress: int, message: str, stage: str = 'transcribing', speed: float = None, etr: float = None):
     """Send progress update to Electron via stdout"""
     output = json.dumps({
         'type': 'progress',
@@ -591,7 +601,9 @@ def transcribe_local(
             'end': segment.end,
             'text': segment.text
         }
-        segments.append(seg_dict)
+        # Stream segment immediately instead of accumulating
+        send_segment(seg_dict)
+        # segments.append(seg_dict)  # Don't accumulate to avoid OOM on large files
         text_parts.append(segment.text)
         
         # Calculate process
@@ -642,7 +654,7 @@ def transcribe_local(
         'speed_factor': round(avg_speed, 2)
     }
     
-    return full_text, segments, detected_lang, metrics
+    return full_text, [], detected_lang, metrics  # Empty segments list - already streamed
 
 
 def transcribe_cloud(

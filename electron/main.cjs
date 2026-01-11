@@ -252,6 +252,10 @@ ipcMain.handle('transcribe:start', async (event, config) => {
                             model: parsed.model,
                             success: parsed.success
                         })
+                    } else if (parsed.type === 'segment') {
+                        mainWindow.webContents.send('transcribe:segment', {
+                            segment: parsed.segment
+                        })
                     } else if (parsed.type === 'models_list') {
                         mainWindow.webContents.send('models:list', {
                             models: parsed.models

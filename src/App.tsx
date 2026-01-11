@@ -324,11 +324,13 @@ function App() {
         if (!window.electronAPI) return
 
         // Progress updates
-        const handleProgress = (_event: unknown, data: { progress: number; message: string; stage: string; system_stats?: { ram_used: number; ram_total: number; vram_used: number; vram_total: number } }) => {
+        const handleProgress = (_event: unknown, data: { progress: number; message: string; stage: string; speed?: number; etr?: number; system_stats?: { ram_used: number; ram_total: number; vram_used: number; vram_total: number } }) => {
             setProgressInfo({
                 status: data.stage === 'extracting' ? 'extracting' : 'transcribing',
                 progress: data.progress,
                 message: data.message,
+                speed: data.speed,
+                etr: data.etr,
                 system_stats: data.system_stats
             })
         }
@@ -379,10 +381,16 @@ function App() {
             setDownloadedModels(prev => new Set([...prev, ...downloaded]))
         }
 
+        // Handle streamed segments
+        const handleSegment = (_event: unknown, data: { segment: Segment }) => {
+            setSegments(prev => [...prev, data.segment])
+        }
+
         // Register listeners
         window.electronAPI.onProgress(handleProgress)
         window.electronAPI.onComplete(handleComplete)
         window.electronAPI.onError(handleError)
+        window.electronAPI.onSegment?.(handleSegment)
         window.electronAPI.onDownloadProgress?.(handleDownloadProgress)
         window.electronAPI.onDownloadComplete?.(handleDownloadComplete)
         window.electronAPI.onModelsList?.(handleModelsList)
@@ -1362,7 +1370,8 @@ declare global {
             downloadModel: (modelName: string) => void
             saveFile: (content: string, filename: string, format: string) => Promise<void>
             saveTempFile: (buffer: ArrayBuffer, filename: string) => Promise<{ success: boolean; path?: string; error?: string }>
-            onProgress: (callback: (event: unknown, data: { progress: number; message: string; stage: string; system_stats?: { ram_used: number; ram_total: number; vram_used: number; vram_total: number } }) => void) => void
+            onProgress: (callback: (event: unknown, data: { progress: number; message: string; stage: string; speed?: number; etr?: number; system_stats?: { ram_used: number; ram_total: number; vram_used: number; vram_total: number } }) => void) => void
+            onSegment?: (callback: (event: unknown, data: { segment: { start: number; end: number; text: string } }) => void) => void
             onComplete: (callback: (event: unknown, data: { text: string; segments?: Array<{ start: number; end: number; text: string }>; detected_language?: string }) => void) => void
             onError: (callback: (event: unknown, data: { error: string }) => void) => void
             onDownloadProgress?: (callback: (event: unknown, data: { model: string; progress: number; message: string }) => void) => void
