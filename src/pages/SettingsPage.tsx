@@ -3,8 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
-import { Select } from '@/components/ui/select'
 import { ArrowLeft, Save, FolderOpen } from 'lucide-react'
 import { useToast } from '@/components/ui/toaster'
 import { Translations } from '../i18n'

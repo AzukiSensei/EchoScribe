@@ -16,6 +16,7 @@ import { Toaster, useToast } from '@/components/ui/toaster'
 import { AudioRecorder } from '@/components/AudioRecorder'
 import { DropZone } from '@/components/DropZone'
 import SetupWizard from '@/components/SetupWizard'
+import { SettingsPage } from '@/pages/SettingsPage'
 import { getDefaultLanguage, getTranslations, Language, languageNames } from '@/i18n'
 
 // Types
@@ -56,6 +57,8 @@ interface ProgressInfo {
     progress: number
     message: string
     model?: string
+    speed?: number
+    etr?: number
     system_stats?: {
         ram_used: number
         ram_total: number
@@ -207,6 +210,9 @@ function App() {
     const [useCloudMode, setUseCloudMode] = useState(() => {
         return localStorage.getItem('echoscribe_cloud_mode') === 'true'
     })
+    const [performanceMode, setPerformanceMode] = useState<'performance' | 'stable' | 'compatibility'>(() => {
+        return (localStorage.getItem('echoscribe_perf_mode') as 'performance' | 'stable' | 'compatibility') || 'performance'
+    })
     const [apiKey, setApiKey] = useState(() => {
         return localStorage.getItem('echoscribe_api_key') || ''
     })
@@ -291,6 +297,10 @@ function App() {
     useEffect(() => {
         localStorage.setItem('echoscribe_cloud_mode', useCloudMode ? 'true' : 'false')
     }, [useCloudMode])
+
+    useEffect(() => {
+        localStorage.setItem('echoscribe_perf_mode', performanceMode)
+    }, [performanceMode])
 
     useEffect(() => {
         localStorage.setItem('echoscribe_model', selectedModel)
@@ -420,7 +430,9 @@ function App() {
                     apiKey: useCloudMode ? apiKey : undefined,
                     language: sourceLanguage,
                     translate: translateToEnglish,
-                    customModelPath: customModelPath || undefined
+                    customModelPath: customModelPath || undefined,
+                    // @ts-ignore - deviceMode will be added to interface
+                    deviceMode: performanceMode
                 })
             } else {
                 simulateTranscription()
@@ -433,7 +445,7 @@ function App() {
                 message: error instanceof Error ? error.message : 'Une erreur est survenue'
             })
         }
-    }, [selectedFile, useCloudMode, apiKey, selectedModel, sourceLanguage, translateToEnglish, customModelPath, toast])
+    }, [selectedFile, useCloudMode, apiKey, selectedModel, sourceLanguage, translateToEnglish, customModelPath, performanceMode, toast])
 
     // Simulate transcription for development
     const simulateTranscription = () => {
@@ -749,6 +761,23 @@ function App() {
         )
     }
 
+    if (showSettings) {
+        return (
+            <div className={`min-h-screen bg-background transition-colors ${isDarkMode ? 'dark' : ''}`}>
+                <SettingsPage
+                    t={t}
+                    onBack={() => setShowSettings(false)}
+                    settings={{
+                        apiKey,
+                        setApiKey,
+                        customModelPath,
+                        setCustomModelPath
+                    }}
+                />
+            </div>
+        )
+    }
+
     return (
         <div className={`min - h - screen bg - background transition - colors ${isDarkMode ? 'dark' : ''} `}>
             <div className="container mx-auto py-8 px-4 max-w-4xl">
@@ -784,6 +813,15 @@ function App() {
                             <Button
                                 variant="ghost"
                                 size="icon"
+                                onClick={() => setShowSettings(true)}
+                                title={t.configuration}
+                            >
+                                <Settings className="h-5 w-5" />
+                            </Button>
+
+                            <Button
+                                variant="ghost"
+                                size="icon"
                                 onClick={() => setShowHistory(!showHistory)}
                                 className="relative"
                                 title={t.history}
@@ -810,66 +848,67 @@ function App() {
                     </p>
                 </header>
 
-                {showHistory && (
-                    <Card className="mb-6">
-                        <CardHeader>
-                            <div className="flex items-center justify-between">
-                                <CardTitle className="text-lg flex items-center gap-2">
-                                    <History className="h-5 w-5" />
-                                    {t.transcriptionHistory}
-                                </CardTitle>
-                                {history.length > 0 && (
-                                    <Button variant="ghost" size="sm" onClick={handleClearHistory}>
-                                        <Trash2 className="h-4 w-4 mr-2" />
-                                        {t.clearAllHistory}
-                                    </Button>
-                                )}
-                            </div>
-                        </CardHeader>
-                        <CardContent>
-                            {history.length === 0 ? (
-                                <p className="text-muted-foreground text-center py-4">
-                                    {t.noHistory}
-                                </p>
-                            ) : (
-                                <div className="space-y-2 max-h-64 overflow-y-auto">
-                                    {history.map(item => (
-                                        <div
-                                            key={item.id}
-                                            className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                                        >
-                                            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => handleLoadFromHistory(item)}>
-                                                <p className="font-medium truncate">{item.fileName}</p>
-                                                <p className="text-sm text-muted-foreground">
-                                                    {new Date(item.date).toLocaleDateString(language, {
-                                                        day: 'numeric',
-                                                        month: 'short',
-                                                        year: 'numeric',
-                                                        hour: '2-digit',
-                                                        minute: '2-digit'
-                                                    })}
-                                                    {' • '}
-                                                    {item.mode === 'cloud' ? 'Cloud' : item.model}
-                                                    {item.language && ` • ${item.language.toUpperCase()} `}
-                                                </p>
-                                            </div>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    handleDeleteFromHistory(item.id)
-                                                }}
-                                            >
-                                                <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                                            </Button>
-                                        </div>
-                                    ))}
+                {
+                    showHistory && (
+                        <Card className="mb-6">
+                            <CardHeader>
+                                <div className="flex items-center justify-between">
+                                    <CardTitle className="text-lg flex items-center gap-2">
+                                        <History className="h-5 w-5" />
+                                        {t.transcriptionHistory}
+                                    </CardTitle>
+                                    {history.length > 0 && (
+                                        <Button variant="ghost" size="sm" onClick={handleClearHistory}>
+                                            <Trash2 className="h-4 w-4 mr-2" />
+                                            {t.clearAllHistory}
+                                        </Button>
+                                    )}
                                 </div>
-                            )}
-                        </CardContent>
-                    </Card>
-                )
+                            </CardHeader>
+                            <CardContent>
+                                {history.length === 0 ? (
+                                    <p className="text-muted-foreground text-center py-4">
+                                        {t.noHistory}
+                                    </p>
+                                ) : (
+                                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                                        {history.map(item => (
+                                            <div
+                                                key={item.id}
+                                                className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                                            >
+                                                <div className="flex-1 min-w-0 cursor-pointer" onClick={() => handleLoadFromHistory(item)}>
+                                                    <p className="font-medium truncate">{item.fileName}</p>
+                                                    <p className="text-sm text-muted-foreground">
+                                                        {new Date(item.date).toLocaleDateString(language, {
+                                                            day: 'numeric',
+                                                            month: 'short',
+                                                            year: 'numeric',
+                                                            hour: '2-digit',
+                                                            minute: '2-digit'
+                                                        })}
+                                                        {' • '}
+                                                        {item.mode === 'cloud' ? 'Cloud' : item.model}
+                                                        {item.language && ` • ${item.language.toUpperCase()} `}
+                                                    </p>
+                                                </div>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        handleDeleteFromHistory(item.id)
+                                                    }}
+                                                >
+                                                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    )
                 }
 
                 <div className="space-y-6">
@@ -918,66 +957,96 @@ function App() {
                             </div>
 
                             {/* Model Selection (Local mode only) */}
+                            {/* Model Selection (Local mode only) */}
                             {!useCloudMode && (
                                 <div className="space-y-4 pt-2">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div className="space-y-2">
-                                            <Label>{t.whisperModel}</Label>
-                                            <div className="flex gap-2">
-                                                <Select
-                                                    value={selectedModel}
-                                                    onChange={(e) => setSelectedModel(e.target.value)}
-                                                    disabled={isProcessing}
-                                                    className="flex-1"
+                                    <div className="space-y-2">
+                                        <Label>Mode de performance</Label>
+                                        <div className="flex flex-col gap-2">
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                                <div
+                                                    className={`cursor-pointer rounded-md border p-3 hover:bg-accent ${performanceMode === 'performance' ? 'border-primary bg-primary/5' : ''}`}
+                                                    onClick={() => setPerformanceMode('performance')}
                                                 >
-                                                    {availableModels.map(model => (
-                                                        <option key={model.name} value={model.name}>
-                                                            {model.name} (Size: {model.size} | VRAM: {model.vram || 'N/A'})
-                                                        </option>
-                                                    ))}
-                                                </Select>
-                                                {!downloadedModels.has(selectedModel) ? (
-                                                    <Button
-                                                        variant="outline"
-                                                        size="icon"
-                                                        onClick={() => handleDownloadModel(selectedModel)}
-                                                        disabled={downloadProgress !== null}
-                                                        title={t.downloadModel}
-                                                    >
-                                                        {downloadProgress !== null && downloadProgress.model === selectedModel ? (
-                                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                                        ) : (
-                                                            <Download className="h-4 w-4" />
-                                                        )}
-                                                    </Button>
-                                                ) : (
-                                                    <div className="flex items-center justify-center w-10 h-10 rounded-md border bg-muted/50" title={t.modelDownloaded}>
-                                                        <Check className="h-5 w-5 text-green-500" />
-                                                    </div>
-                                                )}
+                                                    <div className="font-medium">Performance</div>
+                                                    <div className="text-xs text-muted-foreground">Rapide (CUDA fp16)</div>
+                                                </div>
+                                                <div
+                                                    className={`cursor-pointer rounded-md border p-3 hover:bg-accent ${performanceMode === 'stable' ? 'border-primary bg-primary/5' : ''}`}
+                                                    onClick={() => setPerformanceMode('stable')}
+                                                >
+                                                    <div className="font-medium">Éco / Stable</div>
+                                                    <div className="text-xs text-muted-foreground">Équilibré (CUDA int8)</div>
+                                                </div>
+                                                <div
+                                                    className={`cursor-pointer rounded-md border p-3 hover:bg-accent ${performanceMode === 'compatibility' ? 'border-primary bg-primary/5' : ''}`}
+                                                    onClick={() => setPerformanceMode('compatibility')}
+                                                >
+                                                    <div className="font-medium">Compatibilité</div>
+                                                    <div className="text-xs text-muted-foreground">CPU (Lent, sûr)</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label>{t.whisperModel}</Label>
+                                        <div className="flex gap-2">
+                                            <Select
+                                                value={selectedModel}
+                                                onChange={(e) => setSelectedModel(e.target.value)}
+                                                disabled={isProcessing}
+                                                className="flex-1"
+                                            >
+                                                {availableModels.map(model => (
+                                                    <option key={model.name} value={model.name}>
+                                                        {model.name} (Size: {model.size} | VRAM: {model.vram || 'N/A'})
+                                                    </option>
+                                                ))}
+                                            </Select>
+                                            {!downloadedModels.has(selectedModel) ? (
                                                 <Button
                                                     variant="outline"
                                                     size="icon"
-                                                    onClick={handleOpenModelsFolder}
-                                                    title={t.openModelsFolder}
+                                                    onClick={() => handleDownloadModel(selectedModel)}
+                                                    disabled={downloadProgress !== null}
+                                                    title={t.downloadModel}
                                                 >
-                                                    <FolderOpen className="h-4 w-4" />
+                                                    {downloadProgress !== null && downloadProgress.model === selectedModel ? (
+                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                    ) : (
+                                                        <Download className="h-4 w-4" />
+                                                    )}
                                                 </Button>
-                                            </div>
-                                            {downloadProgress && (
-                                                <div className="space-y-1 mt-2">
-                                                    <div className="flex justify-between text-xs text-muted-foreground">
-                                                        <span>{downloadProgress.message}</span>
-                                                        <span>{Math.round(downloadProgress.progress)}%</span>
-                                                    </div>
-                                                    <Progress value={downloadProgress.progress} className="h-1" />
+                                            ) : (
+                                                <div className="flex items-center justify-center w-10 h-10 rounded-md border bg-muted/50" title={t.modelDownloaded}>
+                                                    <Check className="h-5 w-5 text-green-500" />
                                                 </div>
                                             )}
+                                            <Button
+                                                variant="outline"
+                                                size="icon"
+                                                onClick={handleOpenModelsFolder}
+                                                title={t.openModelsFolder}
+                                            >
+                                                <FolderOpen className="h-4 w-4" />
+                                            </Button>
                                         </div>
+
                                         <div className="flex items-center text-sm text-muted-foreground">
                                             <Info className="h-4 w-4 mr-2 flex-shrink-0" />
                                             {t.largerModelsBetter}
                                         </div>
+
+                                        {downloadProgress && (
+                                            <div className="space-y-1 mt-2">
+                                                <div className="flex justify-between text-xs text-muted-foreground">
+                                                    <span>{downloadProgress.message}</span>
+                                                    <span>{Math.round(downloadProgress.progress)}%</span>
+                                                </div>
+                                                <Progress value={downloadProgress.progress} className="h-1" />
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             )}
@@ -1179,9 +1248,27 @@ function App() {
                             </CardHeader>
                             <CardContent className="space-y-3">
                                 <Progress value={progressInfo.progress} className="h-2" />
-                                <p className={`text - sm ${progressInfo.status === 'error' ? 'text-destructive' : 'text-muted-foreground'} `}>
-                                    {progressInfo.message}
-                                </p>
+                                <div className="flex justify-between items-start text-sm text-muted-foreground">
+                                    <p className={progressInfo.status === 'error' ? 'text-destructive' : ''}>
+                                        {progressInfo.message}
+                                    </p>
+                                    <div className="text-right text-xs">
+                                        {progressInfo.speed !== undefined && (
+                                            <div>Vitesse: {progressInfo.speed}x</div>
+                                        )}
+                                        {progressInfo.etr !== undefined && progressInfo.etr > 0 && (
+                                            <div>Temps restant: ~{Math.round(progressInfo.etr)}s</div>
+                                        )}
+                                        {progressInfo.system_stats && (
+                                            <div className="mt-1 text-[10px] opacity-70">
+                                                RAM: {Math.round(progressInfo.system_stats.ram_used / 1024 / 1024 / 1024 * 10) / 10}GB
+                                                {progressInfo.system_stats.vram_total > 0 && (
+                                                    <> | VRAM: {Math.round(progressInfo.system_stats.vram_used / 1024 / 1024 / 1024 * 10) / 10}GB</>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
                             </CardContent>
                         </Card>
                     )}
@@ -1268,6 +1355,7 @@ declare global {
                 language?: string
                 translate?: boolean
                 customModelPath?: string
+                deviceMode?: 'performance' | 'stable' | 'compatibility'
             }) => Promise<void>
             cancelTranscription: () => void
             listModels: () => void

@@ -163,7 +163,7 @@ ipcMain.handle('file:save', async (event, { content, filename, format }) => {
  * Start the transcription process
  */
 ipcMain.handle('transcribe:start', async (event, config) => {
-    const { filePath, mode, model, apiKey, language, translate, customModelPath } = config
+    const { filePath, mode, model, apiKey, language, translate, customModelPath, deviceMode } = config
 
     if (!fs.existsSync(filePath)) {
         mainWindow.webContents.send('transcribe:error', {
@@ -197,6 +197,10 @@ ipcMain.handle('transcribe:start', async (event, config) => {
         args.push('--custom-model-path', customModelPath)
     }
 
+    if (deviceMode) {
+        args.push('--device-mode', deviceMode)
+    }
+
     if (mode === 'cloud' && apiKey) {
         args.push('--api-key', apiKey)
     }
@@ -219,13 +223,17 @@ ipcMain.handle('transcribe:start', async (event, config) => {
                         mainWindow.webContents.send('transcribe:progress', {
                             progress: parsed.progress,
                             message: parsed.message,
-                            stage: parsed.stage
+                            stage: parsed.stage,
+                            speed: parsed.speed,
+                            etr: parsed.etr,
+                            system_stats: parsed.system_stats
                         })
                     } else if (parsed.type === 'result') {
                         mainWindow.webContents.send('transcribe:complete', {
                             text: parsed.text,
                             segments: parsed.segments || [],
-                            detected_language: parsed.detected_language
+                            detected_language: parsed.detected_language,
+                            metrics: parsed.metrics
                         })
                         currentProcess = null
                     } else if (parsed.type === 'error') {

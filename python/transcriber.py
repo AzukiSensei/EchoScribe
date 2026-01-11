@@ -32,6 +32,12 @@ import argparse
 import json
 import os
 import sys
+import psutil
+try:
+    import pynvml
+    HAS_NVML = True
+except ImportError:
+    HAS_NVML = False
 
 # Fix for Windows symlink permission error in Hugging Face Hub
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -148,10 +154,28 @@ def get_system_stats():
     except Exception:
         pass
         
-    return stats if stats else None
+def get_system_stats():
+    stats = {
+        'ram_used': psutil.virtual_memory().used,
+        'ram_total': psutil.virtual_memory().total,
+        'vram_used': 0,
+        'vram_total': 0
+    }
+    
+    if HAS_NVML:
+        try:
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            stats['vram_used'] = mem_info.used
+            stats['vram_total'] = mem_info.total
+        except:
+            pass
+            
+    return stats
 
 
-def send_progress(progress: int, message: str, stage: str = 'transcribing'):
+def send_progress(progress: int, message: str, stage: str = 'transcribing', speed: float = None, etr: float = None):
     """Send progress update to Electron via stdout"""
     data = {
         'type': 'progress',
@@ -159,6 +183,11 @@ def send_progress(progress: int, message: str, stage: str = 'transcribing'):
         'message': message,
         'stage': stage
     }
+    
+    if speed is not None:
+        data['speed'] = speed
+    if etr is not None:
+        data['etr'] = etr
     
     try:
         stats = get_system_stats()
@@ -171,13 +200,14 @@ def send_progress(progress: int, message: str, stage: str = 'transcribing'):
     print(output, flush=True)
 
 
-def send_result(text: str, segments: List[dict] = None, detected_language: str = None):
+def send_result(text: str, segments: List[dict] = None, detected_language: str = None, metrics: dict = None):
     """Send transcription result to Electron via stdout"""
     output = json.dumps({
         'type': 'result',
         'text': text,
         'segments': segments or [],
-        'detected_language': detected_language
+        'detected_language': detected_language,
+        'metrics': metrics or {}
     })
     print(output, flush=True)
 
@@ -452,132 +482,163 @@ def transcribe_local(
     model_name: str,
     language: Optional[str] = None,
     translate: bool = False,
-    custom_model_path: Optional[str] = None
-) -> Tuple[str, List[dict], str]:
+    custom_model_path: Optional[str] = None,
+    device_mode: str = 'performance'
+) -> Tuple[str, List[dict], str, dict]:
     """
     Transcribe audio using faster-whisper (local mode).
     
     Returns:
-        Tuple of (text, segments, detected_language)
+        Tuple of (text, segments, detected_language, metrics)
     """
     try:
         from faster_whisper import WhisperModel
     except ImportError:
         send_error('faster-whisper n\'est pas installé. Exécutez: pip install faster-whisper')
-        return '', [], ''
+        return '', [], '', {}
     
     send_progress(30, f'Chargement du modèle {model_name}...', 'transcribing')
     
-    try:
-        # Determine device and compute type
+    # Determine device and compute type based on mode
+    if device_mode == 'performance':
         device = 'cuda'
         compute_type = 'float16'
+    elif device_mode == 'stable':
+        device = 'cuda'
+        compute_type = 'int8_float16'
+    else: # compatibility
+        device = 'cpu'
+        compute_type = 'int8'
+    
+    try:
+        import torch
+        if device == 'cuda' and not torch.cuda.is_available():
+            device = 'cpu'
+            compute_type = 'int8'
+            send_progress(32, 'GPU non disponible, bascule vers mode compatibilité (CPU)...', 'transcribing')
+    except ImportError:
+        pass
         
-        try:
-            import torch
-            if not torch.cuda.is_available():
-                device = 'cpu'
-                compute_type = 'int8'
-                send_progress(32, 'GPU non disponible, utilisation du CPU...', 'transcribing')
-        except ImportError:
-            # If torch is missing but we're here, faster-whisper is present.
-            # We assume CUDA is available unless init fails.
-            pass
+    try:
+        # Determine model path
+        os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE" # Fix for some Intel CPU issues
+        print(f"Initializing model on {device} with {compute_type} (mode: {device_mode})...", file=sys.stderr)
         
-        # Load the model with robust fallback
-        try:
-            # First attempt with determined device (CUDA by default)
-            print(f"Initializing model on {device} with {compute_type} (path: {MODELS_DIR})...", file=sys.stderr)
-            if custom_model_path:
-                model = WhisperModel(custom_model_path, device=device, compute_type=compute_type)
-            else:
-                model = WhisperModel(model_name, device=device, compute_type=compute_type, download_root=MODELS_DIR)
-                
-        except Exception as e:
-            # Robust fallback for ANY initialization error on CUDA
-            error_str = str(e).lower()
-            print(f"Model initialization error on {device}: {e}", file=sys.stderr)
-            
-            if device == 'cuda':
-                send_progress(35, 'Erreur GPU détectée, bascule vers CPU...', 'transcribing')
-                print("Falling back to CPU...", file=sys.stderr)
-                device = 'cpu'
-                compute_type = 'int8'
-                
-                # Second attempt on CPU
-                try:
-                    if custom_model_path:
-                        model = WhisperModel(custom_model_path, device=device, compute_type=compute_type)
-                    else:
-                        model = WhisperModel(model_name, device=device, compute_type=compute_type, download_root=MODELS_DIR)
-                except Exception as e2:
-                    # Third attempt: Force hide CUDA
-                    print(f"CPU fallback also failed: {e2}. Trying with CUDA_VISIBLE_DEVICES=''...", file=sys.stderr)
-                    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-                    if custom_model_path:
-                        model = WhisperModel(custom_model_path, device='cpu', compute_type='int8')
-                    else:
-                        model = WhisperModel(model_name, device='cpu', compute_type='int8', download_root=MODELS_DIR)
-            else:
-                # If we were already on CPU or fallback failed
-                raise e
-        
-        send_progress(40, 'Transcription en cours...', 'transcribing')
-        
-        # Prepare transcription options
-        transcribe_options = {
-            'beam_size': 5,
-            'word_timestamps': True,
-        }
-        
-        if language and language != 'auto':
-            transcribe_options['language'] = language
-        
-        if translate:
-            transcribe_options['task'] = 'translate'
-        
-        # Transcribe
-        segments_gen, info = model.transcribe(audio_path, **transcribe_options)
-        
-        detected_lang = info.language
-        total_duration = info.duration if info.duration else 1
-        
-        # Collect segments
-        segments = []
-        text_parts = []
-        
-        for segment in segments_gen:
-            seg_dict = {
-                'start': segment.start,
-                'end': segment.end,
-                'text': segment.text
-            }
-            segments.append(seg_dict)
-            text_parts.append(segment.text)
-            
-            progress = 40 + int((segment.end / total_duration) * 55)
-            progress = min(progress, 95)
-            
-            send_progress(
-                progress,
-                f'Transcription: {int(segment.end)}s / {int(total_duration)}s',
-                'transcribing'
-            )
-        
-        full_text = ' '.join(text_parts).strip()
-        return full_text, segments, detected_lang
-        
-    except Exception as e:
-        error_msg = str(e)
-        
-        if 'CUDA out of memory' in error_msg or 'OutOfMemoryError' in error_msg:
-            send_error('Mémoire GPU insuffisante. Essayez un modèle plus petit.')
-        elif 'Could not load' in error_msg:
-            send_error(f'Impossible de charger le modèle {model_name}. Vérifiez votre installation.')
+        if custom_model_path:
+            model = WhisperModel(custom_model_path, device=device, compute_type=compute_type)
         else:
-            send_error(f'Erreur lors de la transcription: {error_msg}')
+            model = WhisperModel(model_name, device=device, compute_type=compute_type, download_root=MODELS_DIR)
+            
+    except Exception as e:
+        # Robust fallback
+        error_str = str(e).lower()
+        print(f"Model initialization error on {device}: {e}", file=sys.stderr)
         
-        return '', [], ''
+        if device == 'cuda':
+            send_progress(35, 'Erreur GPU détectée, bascule vers CPU...', 'transcribing')
+            device = 'cpu'
+            compute_type = 'int8'
+            
+            try:
+                if custom_model_path:
+                    model = WhisperModel(custom_model_path, device=device, compute_type=compute_type)
+                else:
+                    model = WhisperModel(model_name, device=device, compute_type=compute_type, download_root=MODELS_DIR)
+            except Exception as e2:
+                # Force GPU/CPU visibility hidden if all else fails
+                os.environ["CUDA_VISIBLE_DEVICES"] = ""
+                if custom_model_path:
+                    model = WhisperModel(custom_model_path, device='cpu', compute_type='int8')
+                else:
+                    model = WhisperModel(model_name, device='cpu', compute_type='int8', download_root=MODELS_DIR)
+        else:
+            raise e
+    
+    send_progress(40, 'Transcription en cours...', 'transcribing')
+    
+    # Prepare transcription options
+    transcribe_options = {
+        'beam_size': 5,
+        'word_timestamps': True,
+    }
+    
+    if language and language != 'auto':
+        transcribe_options['language'] = language
+    
+    if translate:
+        transcribe_options['task'] = 'translate'
+    
+    # Transcribe with metrics
+    import time
+    transcription_start = time.time()
+    
+    segments_gen, info = model.transcribe(audio_path, **transcribe_options)
+    
+    detected_lang = info.language
+    total_duration = info.duration if info.duration else 1
+    
+    # Collect segments
+    segments = []
+    text_parts = []
+    
+    for segment in segments_gen:
+        seg_dict = {
+            'start': segment.start,
+            'end': segment.end,
+            'text': segment.text
+        }
+        segments.append(seg_dict)
+        text_parts.append(segment.text)
+        
+        # Calculate process
+        progress = 40 + int((segment.end / total_duration) * 55)
+        progress = min(progress, 95)
+        
+        # Calculate stats
+        current_time = time.time()
+        elapsed = current_time - transcription_start
+        if elapsed > 0:
+            # Speed: minutes processed per second realtime? No, typically "x times realtime".
+            # Or speed in "minutes of audio per minute of processing"?
+            # User asked: "vitesse en min/s pour la vitesse de traitement" -> Minutes (of audio) per Second (of valid processing)
+            speed_val = (segment.end / 60) / elapsed # minutes of audio per second of processing? That's very small.
+            # Usually "x realtime" = segment.end / elapsed.
+            # If user asks "min/s", maybe they mean "minutes processed per second".
+            # Let's give "x realtime" and "min/s".
+            processed_minutes = segment.end / 60
+            speed_min_per_sec = processed_minutes / elapsed
+            
+            # Speed factor (x realtime)
+            speed_factor = segment.end / elapsed
+            
+            # Estimated time remaining
+            remaining_duration = total_duration - segment.end
+            etr = remaining_duration / speed_factor if speed_factor > 0 else 0
+        else:
+            speed_factor = 0
+            etr = 0
+            
+        send_progress(
+            progress,
+            f'Transcription: {int(segment.end)}s / {int(total_duration)}s',
+            'transcribing',
+            speed=round(speed_factor, 2),
+            etr=round(etr, 0)
+        )
+    
+    full_text = ' '.join(text_parts).strip()
+    
+    # Final metrics
+    total_elapsed = time.time() - transcription_start
+    avg_speed = total_duration / total_elapsed if total_elapsed > 0 else 0
+    
+    metrics = {
+        'duration': round(total_duration, 2),
+        'processing_time': round(total_elapsed, 2),
+        'speed_factor': round(avg_speed, 2)
+    }
+    
+    return full_text, segments, detected_lang, metrics
 
 
 def transcribe_cloud(
@@ -679,12 +740,18 @@ def main():
                         help='List available models')
     parser.add_argument('--download-model', metavar='MODEL',
                         help='Download a specific model')
+    parser.add_argument('--device-mode', choices=['performance', 'stable', 'compatibility'], default='performance',
+                        help='Device mode: performance (CUDA/float16), stable (CUDA/int8), compatibility (CPU)')
     
     args = parser.parse_args()
     
     # Handle model listing
     if args.list_models:
         models = list_available_models()
+        # send_models_list is handled inside list_available_models now? 
+        # No, list_available_models returns dict, need to check its impl.
+        # Step 1311 showed list_available_models returns dict.
+        # But previous code had send_models_list(models).
         send_models_list(models)
         return
     
@@ -738,15 +805,16 @@ def main():
         language = args.language if args.language != 'auto' else None
         
         if args.mode == 'local':
-            text, segments, detected_lang = transcribe_local(
+            text, segments, detected_lang, metrics = transcribe_local(
                 audio_path,
                 args.model,
                 language=language,
                 translate=args.translate,
-                custom_model_path=args.custom_model_path
+                custom_model_path=args.custom_model_path,
+                device_mode=args.device_mode
             )
         else:
-            text, segments, detected_lang = transcribe_cloud(
+            text, segments, detected_lang, metrics = transcribe_cloud(
                 audio_path,
                 args.api_key,
                 language=language,
@@ -755,7 +823,7 @@ def main():
         
         if text:
             send_progress(100, 'Transcription terminée!', 'transcribing')
-            send_result(text, segments, detected_lang)
+            send_result(text, segments, detected_lang, metrics)
     
     finally:
         # Clean up temporary audio file

@@ -129,6 +129,7 @@ export interface Translations {
     openFolderError: string
     success: string
     recordingSaved: string
+    includeSystemAudio: string
 }
 
 const translations: Record<Language, Translations> = {
@@ -394,6 +395,7 @@ const translations: Record<Language, Translations> = {
         openFolderError: 'No se pudo abrir la carpeta',
         success: 'Éxito',
         recordingSaved: 'Grabación guardada con éxito',
+        includeSystemAudio: 'Incluir audio del sistema',
     },
     zh: {
         appName: 'EchoScribe',
@@ -481,6 +483,7 @@ const translations: Record<Language, Translations> = {
         openFolderError: '无法打开文件夹',
         success: '成功',
         recordingSaved: '录音已保存',
+        includeSystemAudio: '包括系统音频',
     },
     ar: {
         appName: 'EchoScribe',
@@ -744,6 +747,7 @@ const translations: Record<Language, Translations> = {
         openFolderError: 'Не удалось открыть папку',
         success: 'Успех',
         recordingSaved: 'Запись сохранена успешно',
+        includeSystemAudio: 'Включить системный звук',
     },
     de: {
         appName: 'EchoScribe',
@@ -919,6 +923,7 @@ const translations: Record<Language, Translations> = {
         openFolderError: 'フォルダを開けませんでした',
         success: '成功',
         recordingSaved: '録音が保存されました',
+        includeSystemAudio: 'システム音声を含める',
     },
 }
 

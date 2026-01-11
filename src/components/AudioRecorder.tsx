@@ -6,20 +6,12 @@ import { cn } from '@/lib/utils'
 
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
+import { Translations } from '@/i18n'
 
 interface AudioRecorderProps {
     onRecordingComplete: (audioBlob: Blob, filename: string) => void
     disabled?: boolean
-    translations?: {
-        startRecording: string
-        stopAndTranscribe: string
-        recording: string
-        paused: string
-        liveRecording: string
-        clickToStartRecording: string
-        selectMicrophone: string
-        listenRecording: string
-    }
+    translations?: Translations
 }
 
 interface AudioDevice {
