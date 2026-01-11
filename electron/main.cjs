@@ -15,7 +15,7 @@
  * - FFmpeg binaries should be included in the 'ffmpeg' directory or available in PATH
  */
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron')
 const path = require('path')
 const { spawn } = require('child_process')
 const fs = require('fs')
