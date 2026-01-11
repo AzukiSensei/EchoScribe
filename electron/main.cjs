@@ -430,6 +430,20 @@ ipcMain.handle('file:saveTemp', async (event, { buffer, filename }) => {
 /**
  * Open the models folder in file explorer
  */
+ipcMain.handle('models:openFolder', async () => {
+    try {
+        const documentsPath = app.getPath('documents')
+        const modelsDir = path.join(documentsPath, 'Models')
+
+        if (!fs.existsSync(modelsDir)) {
+            fs.mkdirSync(modelsDir, { recursive: true })
+        }
+
+        await shell.openPath(modelsDir)
+        return true
+    } catch (error) {
+        console.error('Error opening models folder:', error)
+        return false
     }
 })
 
