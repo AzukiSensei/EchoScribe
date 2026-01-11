@@ -1,3 +1,3 @@
 git add .
-git commit -m "fix: explicit python directory path resolution for requirements.txt in electron install-deps"
+git commit -m "fix: explicit python directory path resolution and robust psutil import"
 git push origin master

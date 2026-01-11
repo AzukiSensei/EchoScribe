@@ -32,7 +32,11 @@ import argparse
 import json
 import os
 import sys
-import psutil
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 try:
     import pynvml
     HAS_NVML = True
@@ -134,13 +138,13 @@ def get_system_stats():
     stats = {}
     
     # RAM (psutil is standard)
-    try:
-        import psutil
-        mem = psutil.virtual_memory()
-        stats['ram_used'] = round(mem.used / (1024**3), 1)
-        stats['ram_total'] = round(mem.total / (1024**3), 1)
-    except ImportError:
-        pass
+    if HAS_PSUTIL:
+        try:
+            mem = psutil.virtual_memory()
+            stats['ram_used'] = round(mem.used / (1024**3), 1)
+            stats['ram_total'] = round(mem.total / (1024**3), 1)
+        except Exception:
+            pass
         
     # VRAM (pynvml for NVIDIA)
     try:
