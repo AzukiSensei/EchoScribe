@@ -338,10 +338,11 @@ function App() {
         // Transcription complete
         const handleComplete = (_event: unknown, data: { text: string; segments?: Segment[]; detected_language?: string }) => {
             // Reconstruct full text from streamed segments (Python sends empty text for large files)
-            setTranscriptionResult(prev => {
-                // Use accumulated segments to rebuild text
-                const fullText = segments.map(s => s.text).join(' ').trim()
-                return fullText || data.text || prev
+            setSegments(currentSegments => {
+                const fullText = currentSegments.map(s => s.text).join(' ').trim()
+                // Update transcription result with the reconstructed text
+                setTranscriptionResult(fullText || data.text || '')
+                return currentSegments // Keep segments as-is
             })
             setDetectedLanguage(data.detected_language || '')
             setProgressInfo({
