@@ -1,0 +1,15 @@
+# EchoScribe Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Local transcription engine
+# faster-whisper provides better performance than the original openai-whisper
+faster-whisper>=1.0.0
+
+# OpenAI API client for cloud mode
+openai>=1.0.0
+
+# Optional: PyTorch with CUDA support for GPU acceleration
+# Install separately based on your CUDA version:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# or for CPU only:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
