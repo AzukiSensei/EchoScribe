@@ -591,20 +591,19 @@ def transcribe_local(
     detected_lang = info.language
     total_duration = info.duration if info.duration else 1
     
-    # Collect segments
-    segments = []
-    text_parts = []
+    # Don't collect anything - just count and stream
+    segment_count = 0
     
     for segment in segments_gen:
         seg_dict = {
+            'id': segment_count,
             'start': segment.start,
             'end': segment.end,
             'text': segment.text
         }
         # Stream segment immediately instead of accumulating
         send_segment(seg_dict)
-        # segments.append(seg_dict)  # Don't accumulate to avoid OOM on large files
-        text_parts.append(segment.text)
+        segment_count += 1
         
         # Calculate process
         progress = 40 + int((segment.end / total_duration) * 55)
@@ -614,16 +613,6 @@ def transcribe_local(
         current_time = time.time()
         elapsed = current_time - transcription_start
         if elapsed > 0:
-            # Speed: minutes processed per second realtime? No, typically "x times realtime".
-            # Or speed in "minutes of audio per minute of processing"?
-            # User asked: "vitesse en min/s pour la vitesse de traitement" -> Minutes (of audio) per Second (of valid processing)
-            speed_val = (segment.end / 60) / elapsed # minutes of audio per second of processing? That's very small.
-            # Usually "x realtime" = segment.end / elapsed.
-            # If user asks "min/s", maybe they mean "minutes processed per second".
-            # Let's give "x realtime" and "min/s".
-            processed_minutes = segment.end / 60
-            speed_min_per_sec = processed_minutes / elapsed
-            
             # Speed factor (x realtime)
             speed_factor = segment.end / elapsed
             
